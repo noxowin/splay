@@ -1,0 +1,32 @@
+# Local build outputs and downloaded binaries
+/build/
+/dist/
+/out/
+*.dll
+*.exe
+*.pdb
+*.obj
+*.o
+*.zip
+*.7z
+
+# Local tools and temporary data
+/.local/
+/.tmp/
+/.venv/
+__pycache__/
+*.pyc
+*.log
+
+# Private runtime configuration and credentials
+/.codex/
+/portable_config/
+/local-config/
+.env
+.env.*
+!.env.example
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+*.swp

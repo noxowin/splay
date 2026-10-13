@@ -1,0 +1,10 @@
+* text=auto
+*.md text eol=lf
+*.lua text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.cpp text eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.ico binary
