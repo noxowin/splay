@@ -3,7 +3,7 @@
 ## Scope and status
 
 - splay is an optional Syncplay-compatible extension for existing mpv installations, initially on Windows. A bundled player is a later phase.
-- This initial repository contains planning documents only. Never describe proposed behavior as implemented or tested.
+- Implementation is now authorized by the user's 2026-10-13 request, following docs/implementation-plan.md. Never describe proposed behavior as implemented or tested without evidence.
 - Work within the current user request. The roadmap is not blanket authorization to implement every milestone.
 - Keep the GitHub repository private during initial development. Do not change visibility as part of routine pushes or releases.
 

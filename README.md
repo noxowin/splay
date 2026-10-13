@@ -36,6 +36,7 @@
 ## 项目文档
 
 - [架构与插件边界](docs/architecture.md)
+- [首版实施计划](docs/implementation-plan.md)
 - [开发路线与验收条件](docs/roadmap.md)
 - [参考项目与来源记录](docs/references.md)
 - [协作约定](AGENTS.md)
