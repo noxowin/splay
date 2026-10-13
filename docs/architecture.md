@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart LR
-    launcher[浏览器或其他启动入口] --> player[现有 mpv 实例]
+    launcher[浏览器或其他启动入口]
     subgraph player[现有 mpv 实例]
         ui[Lua 操作面板]
         adapter[mpv 播放状态适配]
@@ -14,6 +14,7 @@ flowchart LR
         ui <--> core
         adapter <--> core
     end
+    launcher --> player
     core <--> server[现有 Syncplay 服务器]
     ui -.可选菜单.-> uosc[uosc]
 ```
