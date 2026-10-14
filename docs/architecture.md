@@ -1,6 +1,6 @@
 # 架构与插件边界
 
-状态：Windows x64 开发预览实现。原生核心为 C++17，网络为 Winsock，TLS 为 Windows Schannel；实际宿主与验证结果见 [验证记录](validation.md)。最低兼容版本尚未确定。
+状态：Windows x64 开发预览实现。原生核心为 C++17，网络为 Winsock，TLS 为 Windows Schannel；实际宿主与验证结果见 [本轮验证记录](validation-v2.md)。最低兼容版本尚未确定。
 
 ## 分层
 
@@ -22,6 +22,8 @@ flowchart LR
 - **同步核心**：服务器连接、协议解析、房间与成员状态、操作员权限、延迟估计和同步决策。尽量不依赖 mpv 界面，便于测试和未来复用。
 - **mpv 适配层**：观察播放属性和生命周期，将本地操作映射到核心，将远端状态应用到当前播放器。
 - **Lua 界面**：服务器与房间输入、成员列表、准备状态、连接和同步开关。界面与核心通过结构化消息交换数据。
+- **Lua 屏幕显示**：独立的 `splay_overlay.lua` 展示准备状态、播放事件和聊天，以及局部鼠标按钮；从主界面接收状态和事件，不实现网络协议。
+- **连接历史**：原生 `History` 模块仅保存允许的非密码字段，通过文件锁、读取后合并、临时文件替换保护跨进程保存。默认值与历史恢复由主界面协调，不触发自动连接。
 - **可选 uosc 适配**：使用已有菜单 API；缺少 uosc 时仍能完成连接、准备和退出操作。
 
 Windows 原生组件使用 mpv C 插件 DLL 接口。通过 `MPV_CPLUGIN_DYNAMIC_SYM` 使用当前宿主提供的 API，不链接另一份 libmpv。DLL 与 Lua 通过 `script-message-to` 交换结构化 JSON；接口见 [实施计划](implementation-plan.md)。网络线程只处理传输，mpv API 均由插件主循环调用。
@@ -36,6 +38,7 @@ Windows 原生组件使用 mpv C 插件 DLL 接口。通过 `MPV_CPLUGIN_DYNAMIC
 scripts/
   splay_core.dll
   splay.lua
+  splay_overlay.lua
 script-opts/
   splay.conf.example
 ```
@@ -46,13 +49,15 @@ script-opts/
 
 uosc 的 `set-button` 注册按钮后，仍需用户把 `button:splay` 加入自己的 `controls`；不能把注册按钮描述为自动修改控制条。自有菜单使用唯一标识，更新或关闭时不影响其他插件的菜单。
 
+自带的屏幕按钮独立于 uosc controls，鼠标移到底部时显示，只在可见按钮区域接管左键，菜单打开时停止接管。配置历史位于实际 mpv 配置目录的 `splay-history.json`，不会写入 `mpv.conf` 或 `input.conf`。历史恢复与显示开关等接口见 [本轮设计](iteration-2.md)。
+
 参考：[Windows 配置目录](https://mpv.io/manual/stable/#files-on-windows)、[uosc 扩展接口](https://github.com/tomasklaen/uosc/wiki)、[Menu API](https://github.com/tomasklaen/uosc/wiki/Menu-API)。
 
 ## 协议与状态
 
 实现接入未修改的 Syncplay 1.7.6 服务器，与同版官方客户端联调。协议参考该版本的 `protocols.py`、`client.py`、`server.py`；旧版网页协议说明用于理解，不作为完整规范。项目不包含 Syncplay 的实现代码。
 
-基础消息包括握手、成员/房间更新、列表、播放状态、错误与心跳。同步核心处理延迟估计和 `ignoringOnTheFly` 确认；主动跳转、首次对齐或位置差超过 1.5 秒时跳转纠偏。该阈值是实现策略，并非精度保证。未采用临时改变播放速度的纠偏方法。
+基础消息包括握手、成员/房间更新、列表、播放状态、聊天、错误与心跳。聊天通过服务端能力协商，按 Unicode 码点遵守消息长度。播放活动事件从权威状态的操作者和变更生成，心跳、首次基线及受控房拒绝的普通成员动作不重复显示。同步核心处理延迟估计和 `ignoringOnTheFly` 确认；主动跳转、首次对齐或位置差超过 1.5 秒时跳转纠偏。该阈值是实现策略，并非精度保证。未采用临时改变播放速度的纠偏方法。
 
 连接层在发送 Hello 前协商 STARTTLS。仅 `prefer` 遇到服务器明确不支持 TLS 时允许明文；握手/证书失败不降级。传输具有消息大小、队列大小和网络操作超时限制，断开时取消并回收工作线程。首版支持 TLS 1.2，使用系统证书校验和缓存证书材料。
 
@@ -82,6 +87,7 @@ src/core/          协议、房间模型与同步策略
 src/net/           Winsock、STARTTLS 和 Schannel
 src/mpv/           原生插件入口和播放状态适配
 scripts/splay.lua  Lua 界面与可选 uosc 适配
+scripts/splay_overlay.lua 状态文字、聊天和鼠标按钮
 tests/             协议、同步状态机和集成验证
 tools/             构建与白名单打包
 packaging/         安装、卸载说明

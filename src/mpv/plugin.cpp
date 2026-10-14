@@ -1,6 +1,7 @@
 #define MPV_CPLUGIN_DYNAMIC_SYM
 #include "../../third_party/mpv/client.h"
 #include "../core/session.hpp"
+#include "../core/history.hpp"
 #include "../net/transport.hpp"
 #include <chrono>
 #include <cmath>
@@ -35,6 +36,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
     try{
         splay::Transport transport;
         splay::Session session;
+        splay::History history;
         double suppress_until=0,next_sample=0;
         bool pending_seek=false;
         bool loading=false;
@@ -51,6 +53,11 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
             transport.send_line(j.dump());
         };
         session.changed=publish;
+        session.event=[&](const splay::Json& value){
+            auto payload=value.dump(-1,' ',false,splay::Json::error_handler_t::replace);
+            const char* args[]={"script-message-to","splay","splay-event",payload.c_str(),nullptr};
+            mpv_command(h,args);
+        };
         session.apply=[&](const splay::Correction& c){
             if(c.paused){
                 expected_pause=c.paused;
@@ -125,7 +132,16 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                         auto c=splay::Json::parse(m->args[1]);
                         if(!c.is_object())throw std::runtime_error("Invalid command");
                         auto action=text(c,"action",32);
-                        if(action=="status")publish();
+                        if(action=="history-load"||action=="history-save"){
+                            splay::Json result;
+                            try{result=history.handle(c);}
+                            catch(const std::exception& exception){result={{"schema",1},{"error",exception.what()}};}
+                            catch(...){result={{"schema",1},{"error","History operation failed"}};}
+                            auto payload=result.dump(-1,' ',false,splay::Json::error_handler_t::replace);
+                            const char* args[]={"script-message-to","splay","splay-history",payload.c_str(),nullptr};
+                            mpv_command(h,args);
+                        }
+                        else if(action=="status")publish();
                         else if(action=="disconnect"){
                             transport.disconnect();
                             session.disconnected();

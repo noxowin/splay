@@ -7,14 +7,17 @@ No mpv, Python, uosc, or player configuration is bundled.
 Manual installation (close mpv first):
 1. Find your existing mpv configuration directory (normally %APPDATA%\mpv;
    portable installations use portable_config alongside mpv.exe).
-2. Copy only scripts\splay.lua and scripts\splay_core.dll to its scripts folder.
-   If either target exists, compare/back up that file explicitly before replacing.
+2. Copy scripts\splay.lua, scripts\splay_core.dll and scripts\splay_overlay.lua
+   to its scripts folder. Back up existing splay files before replacing them.
+   Upgrading the first preview replaces two files and adds splay_overlay.lua.
 3. Optionally copy selected settings from script-opts\splay.conf.example to
    script-opts\splay.conf. Do not store passwords. The example is not auto-installed.
 4. Start mpv normally, preserving your usual media and arguments. Press
-   Ctrl+Shift+s for the native panel. The binding is non-forced and can be
+   Shift+s for the native panel, or move the mouse near the bottom and click
+   the Sync button. The binding is non-forced and can be
    overridden in your input.conf. Alternative: script-message-to splay splay-open.
 
+First-run defaults: syncplay.pl:8999 and nickname splayuser.
 Disconnected is the default. Enter host, port, nickname, room, server password
 and TLS policy, then select Connect. Reconnect is manual; disconnect leaves
 local playback running. Password prompts are visible to people looking at the
@@ -24,6 +27,19 @@ mpv console input history for this process. Clearing splay memory does not
 clear the console history; close mpv to release the process. Passwords are never written by
 splay. Treat debug/trace IPC logs outside splay as sensitive.
 
+Connection history is stored in splay-history.json inside the active mpv config
+directory. It remembers non-secret fields and multiple profiles. Selecting a
+profile fills the form and clears the in-memory password; it does not connect.
+History overrides first-run defaults from splay.conf. Set history_enabled=no
+to disable reading/saving history. Passwords and chats are not saved to disk.
+
+The top-left overlay shows readiness, playback actions and chat. The bottom
+mouse buttons open the panel, toggle readiness and open chat input. The menu
+can hide status/buttons temporarily; status_osd=no and button_enabled=no are
+persistent configuration options. Adjust button_bottom for custom toolbars.
+Chat history is limited to 100 messages in the current room/connection and is
+cleared when changing rooms or disconnecting. Server chat limits are respected.
+
 TLS prefer negotiates encryption; a server explicitly lacking TLS may permit
 plaintext. require refuses plaintext. off intentionally disables TLS. Certificate
 and handshake failures must not silently fall back to plaintext.
@@ -31,24 +47,28 @@ and handshake failures must not silently fall back to plaintext.
 Create controlled room: enter room name and a Syncplay operator password of form
 AB-123-456. Keep that password yourself; splay does not persist it.
 
-Optional uosc 5.13: script-message-to splay splay-open uosc opens the menu.
+Optional uosc (tested 5.12/5.13): script-message-to splay splay-open uosc opens the menu.
 splay registers a uosc button named splay but never modifies uosc controls.
 Add button:splay to your own uosc controls only if you want a toolbar entry.
+The standalone bottom mouse buttons need no uosc controls changes.
 Native panel works without uosc. Set ui=uosc only when uosc is installed.
 
 Automation via mpv IPC: script-message-to splay splay-command <JSON>, where JSON
 uses the command schema in docs/implementation-plan.md in the source repository.
 This interface accepts secrets; use protected local IPC and avoid shell history.
 
-Uninstall (close mpv first): remove only scripts\splay.lua and
-scripts\splay_core.dll. Optionally remove your own script-opts\splay.conf and
-the example. Never remove the scripts/configuration directory or other files.
+Uninstall (close mpv first): remove only scripts\splay.lua,
+scripts\splay_core.dll and scripts\splay_overlay.lua. Optionally remove your own
+script-opts\splay.conf, splay-history.json and splay-history.json.lock.
+Never remove the scripts/configuration directory or other files.
 
 This preview requires the validation record in the source repository before
 production use. Tested behavior and limitations are listed there. No automatic
 connection, media loading, configuration overwrite, or playlist sharing occurs.
 
 Chinese installation instructions are included at docs/install.md.
-The included docs/validation.md records tested behavior and known limitations.
-The adjacent splay-windows-x64-preview.zip.sha256 file contains the archive
+The included docs/validation-v2.md records current tested behavior and limits;
+docs/validation.md is the first-preview archive. Upstream update impact is
+explained in docs/upstream-compatibility.md.
+The adjacent splay-windows-x64-preview2.zip.sha256 file contains the archive
 SHA-256 checksum; it is distributed alongside, not inside, the ZIP.

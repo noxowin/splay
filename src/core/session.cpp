@@ -37,6 +37,22 @@ namespace splay {
                 ,{"size",0}
             };
         }
+        std::string chat_text(const Json& j,const char* key,size_t limit){
+            auto i=j.find(key);
+            if(i==j.end()||!i->is_string())throw std::runtime_error("Invalid chat text");
+            const auto value=i->get<std::string>();
+            // JSON parsing validates UTF-8 on the wire; also validate direct API calls.
+            Json(value).dump();
+            size_t characters=0,end=0;
+            for(size_t pos=0;pos<value.size();++pos){
+                if((static_cast<unsigned char>(value[pos])&0xc0)!=0x80){
+                    if(characters==limit)break;
+                    ++characters;
+                }
+                end=pos+1;
+            }
+            return value.substr(0,end);
+        }
     }
     std::string password_md5(const std::string& input){
         if(input.empty())return {};
@@ -70,11 +86,17 @@ namespace splay {
     void Session::notify(){
         if(changed)changed();
     }
+    void Session::publish_event(Json value){
+        value["schema"]=1;
+        value["id"]=++eventId_;
+        if(event)event(value);
+    }
     void Session::reset_sync(){
         clientIgnore_=serverIgnore_=0;
         first_=true;
         rtt_=0;
         pending_state_=nullptr;
+        eventBaseline_=false;
     }
     bool Session::controlled() const {
         static const std::regex re("^\\+.*:[A-Za-z0-9_]{12}$");
@@ -91,6 +113,8 @@ namespace splay {
         lastReceive_=0;
         error_.clear();
         logged_=false;
+        chatSupported_=false;
+        chatMaxLength_=150;
         members_.clear();
         controller_=ready_=false;
         reset_sync();
@@ -112,7 +136,8 @@ namespace splay {
             ,{
                 "features",{
                     {"sharedPlaylists",false}
-                    ,{"chat",false}
+                    ,{"chat",true}
+                    ,{"maxChatMessageLength",150}
                     ,{"readiness",true}
                     ,{"managedRooms",true}
                     ,{"setOthersReadiness",false}
@@ -128,6 +153,8 @@ namespace splay {
     }
     void Session::disconnected(const std::string& error){
         logged_=false;
+        chatSupported_=false;
+        chatMaxLength_=150;
         connection_=error.empty()?"disconnected":"error";
         error_=error;
         encrypted_=false;
@@ -157,6 +184,8 @@ namespace splay {
             ,{"ready",ready_}
             ,{"is_controller",controller_}
             ,{"controlled",controlled()}
+            ,{"chat_supported",chatSupported_}
+            ,{"chat_max_length",chatMaxLength_}
             ,{"error",error_}
             ,{"warning",warning}
             ,{"members",members}
@@ -302,6 +331,17 @@ namespace splay {
                 logged_=true;
                 connection_="connected";
                 error_.clear();
+                chatSupported_=false;
+                chatMaxLength_=150;
+                auto features=h.find("features");
+                if(features!=h.end()&&features->is_object()){
+                    chatSupported_=flag(*features,"chat");
+                    auto limit=features->find("maxChatMessageLength");
+                    if(limit!=features->end()&&limit->is_number_integer()){
+                        auto value=limit->get<long long>();
+                        if(value>=0)chatMaxLength_=static_cast<size_t>(value);
+                    }
+                }
                 auto pending=pending_state_;
                 reset_sync();
                 file();
@@ -321,6 +361,10 @@ namespace splay {
                 );
             }
             if(logged_&&j.contains("Set")&&j["Set"].is_object())set(j["Set"]);
+            if(logged_&&chatSupported_&&j.contains("Chat")&&j["Chat"].is_object()){
+                auto& chat=j["Chat"];
+                publish_event({{"type","chat"},{"username",str(chat,"username")},{"text",chat_text(chat,"message",chatMaxLength_)}});
+            }
             if(logged_&&j.contains("List")&&j["List"].is_object()){
                 members_.clear();
                 controller_=false;
@@ -378,6 +422,7 @@ namespace splay {
             if(p.contains("position")&&p["position"].is_number()&&p.contains("paused")&&p["paused"].is_boolean()){
                 double pos=number(p,"position",-1);
                 bool paused=flag(p,"paused");
+                if(pos>=0)playback_event(p,now);
                 if(pos>=0&&local_.loaded&&!local_.buffering&&std::abs(local_.speed-1)<.001){
                     if(!paused)pos+=std::min(rtt_/2,1.0);
                     Correction c;
@@ -394,6 +439,29 @@ namespace splay {
         }
         reply(ping);
     }
+    void Session::playback_event(const Json& p,double now){
+        std::string user;
+        auto setter=p.find("setBy");
+        if(setter!=p.end()&&setter->is_string())user=setter->get<std::string>();
+        // Upstream sends a rejected ordinary member's pause state immediately
+        // before its authoritative correction. That is not a room action.
+        if(controlled()&&!user.empty()){
+            if(user==user_&&!controller_)return;
+            auto member=members_.find(user);
+            if(member!=members_.end()&&!flag(member->second,"is_controller"))return;
+        }
+        const bool paused=flag(p,"paused"),seek=flag(p,"doSeek");
+        const double position=number(p,"position");
+        const double expected=eventPosition_+(eventPaused_?0:std::max(0.0,now-eventTime_));
+        const bool moved=seek&&std::abs(position-expected)>.1;
+        if(eventBaseline_&&(paused!=eventPaused_||moved)){
+            publish_event({{"type","playback"},{"username",user},{"paused",paused},{"position",position},{"seek",moved}});
+        }
+        eventBaseline_=true;
+        eventPaused_=paused;
+        eventPosition_=position;
+        eventTime_=now;
+    }
     void Session::local_change(bool seek,double now){
         now_=now;
         if(logged_&&local_.loaded&&!local_.buffering&&std::abs(local_.speed-1)<.001&&(!controlled()||controller_))reply(Json::object(),true,seek);
@@ -402,8 +470,16 @@ namespace splay {
         if((logged_||connection_=="connecting")&&lastReceive_>0&&now-lastReceive_>12.5)disconnected("Server timed out");
     }
     void Session::command(const Json& c){
-        if(!logged_)return;
         auto a=str(c,"action");
+        if(a=="chat"){
+            if(!logged_)throw std::runtime_error("Connect to a room before sending chat");
+            if(!chatSupported_)throw std::runtime_error("Chat is disabled or unsupported by this server");
+            auto text=chat_text(c,"text",chatMaxLength_);
+            if(text.empty())throw std::runtime_error("Chat message is empty");
+            emit({{"Chat",text}});
+            return;
+        }
+        if(!logged_)return;
         if(a=="room"){
             auto r=str(c,"room");
             room_=r;

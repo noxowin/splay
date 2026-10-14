@@ -54,5 +54,59 @@ int main(){
  s.connected(false,200);s.tick(213);assert(s.status()["connection"]=="error");
  s.receive("[]",214);assert(!s.logged());s.receive(std::string(17000,'x'),214);assert(!s.logged());
  assert(password_md5("password")=="5f4dcc3b5aa765d61d8327deb882cf99");
+ // Chat is the upstream wire protocol: outgoing string, incoming username/message.
+ Session chat;std::vector<Json> messages,events;
+ chat.send=[&](const Json& j){messages.push_back(j);};
+ chat.event=[&](const Json& j){events.push_back(j);};
+ chat.configure("localhost",8999,"me","room","");chat.connected(false,300);
+ assert(messages.back()["Hello"]["features"]["chat"]==true);
+ assert(messages.back()["Hello"]["features"]["maxChatMessageLength"]==150);
+ chat.receive(R"({"Hello":{"username":"me","room":{"name":"room"},"features":{"chat":true,"maxChatMessageLength":4}}})",300);
+ assert(chat.status()["chat_supported"]==true&&chat.status()["chat_max_length"]==4);
+ chat.command({{"action","chat"},{"text",u8"中文😀éextra"}});
+ assert(messages.back()["Chat"]==u8"中文😀é");
+ chat.command({{"action","chat"},{"text",std::string("a\n\0b",4)}});
+ assert(messages.back()["Chat"]==std::string("a\n\0b",4));
+ chat.receive(R"({"Chat":{"username":"peer","message":"{\\\\"}})",301);
+ assert(events.size()==1&&events.back()["type"]=="chat"&&events.back()["username"]=="peer");
+ auto id=events.back()["id"].get<uint64_t>();
+ // Baseline and progressing heartbeat never become playback notifications.
+ chat.receive(R"({"State":{"playstate":{"position":10,"paused":false,"setBy":"peer"}}})",301);
+ chat.receive(R"({"State":{"playstate":{"position":11,"paused":false,"setBy":"peer"}}})",302);
+ assert(events.size()==1);
+ chat.receive(R"({"State":{"playstate":{"position":11.5,"paused":true,"setBy":"peer"}}})",302.5);
+ assert(events.size()==2&&events.back()["type"]=="playback"&&events.back()["username"]=="peer"&&events.back()["paused"]==true&&!events.back()["seek"].get<bool>());
+ chat.receive(R"({"State":{"playstate":{"position":11.5,"paused":true,"setBy":"peer"}}})",303);
+ assert(events.size()==2);
+ chat.receive(R"({"State":{"playstate":{"position":30,"paused":true,"doSeek":true,"setBy":"me"}}})",304);
+ assert(events.size()==3&&events.back()["username"]=="me"&&events.back()["seek"]==true&&events.back()["id"].get<uint64_t>()>id);
+ chat.receive(R"({"State":{"playstate":{"position":30,"paused":true,"doSeek":true,"setBy":"me"}}})",305);
+ assert(events.size()==3);
+ chat.command({{"action","room"},{"room","another"}});
+ chat.receive(R"({"State":{"playstate":{"position":0,"paused":false,"doSeek":true,"setBy":"other"}}})",306);
+ assert(events.size()==3);
+ chat.disconnected();assert(chat.status()["chat_supported"]==false);
+ bool rejected=false;try{chat.command({{"action","chat"},{"text","offline"}});}catch(const std::runtime_error&){rejected=true;}
+ assert(rejected);
+ chat.configure("localhost",8999,"me","room","");chat.connected(false,310);
+ chat.receive(R"({"Hello":{"username":"me","room":{"name":"room"},"features":{"chat":false,"maxChatMessageLength":150}}})",310);
+ rejected=false;try{chat.command({{"action","chat"},{"text","disabled"}});}catch(const std::runtime_error&){rejected=true;}
+ assert(rejected&&chat.logged());
+ chat.receive(R"({"State":{"playstate":{"position":90,"paused":true,"doSeek":true,"setBy":"peer"}}})",311);
+ assert(events.size()==3);
+ chat.disconnected();chat.configure("localhost",8999,"me","room","");chat.connected(false,320);
+ chat.receive(R"({"Hello":{"username":"me","room":{"name":"room"}}})",320);
+ assert(chat.status()["chat_supported"]==false);
+ Session managed;std::vector<Json> managed_events;
+ managed.event=[&](const Json& e){managed_events.push_back(e);};
+ managed.configure("localhost",8999,"me","+ctl:ABCDEFGHIJKL","");managed.connected(false,400);
+ managed.receive(R"({"Hello":{"username":"me","room":{"name":"+ctl:ABCDEFGHIJKL"}}})",400);
+ managed.receive(R"({"List":{"+ctl:ABCDEFGHIJKL":{"operator":{"controller":true},"ordinary":{"controller":false}}}})",400);
+ managed.receive(R"({"State":{"playstate":{"position":20,"paused":true,"setBy":"operator"}}})",401);
+ managed.receive(R"({"State":{"playstate":{"position":20,"paused":false,"setBy":"ordinary"}}})",402);
+ managed.receive(R"({"State":{"playstate":{"position":20,"paused":true,"doSeek":true,"setBy":"operator"}}})",402);
+ assert(managed_events.empty());
+ managed.receive(R"({"State":{"playstate":{"position":20,"paused":false,"setBy":"operator"}}})",403);
+ assert(managed_events.size()==1&&managed_events.back()["username"]=="operator");
  std::cout<<"session tests passed\n";
 }

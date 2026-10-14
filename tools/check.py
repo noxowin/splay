@@ -6,14 +6,21 @@ import sys
 from build import ROOT, default_compiler
 
 parser = argparse.ArgumentParser()
-parser.add_argument('suite', choices=['core', 'net', 'ui', 'ui-review', 'tls-rejection'])
+parser.add_argument('suite', choices=['core', 'history', 'net', 'ui', 'ui-review', 'ui-history', 'tls-rejection'])
 parser.add_argument('--compiler', default=default_compiler())
 args = parser.parse_args()
 
 def run(command):
     subprocess.run(list(map(str, command)), cwd=ROOT, check=True, timeout=180)
 
-if args.suite in ('core', 'net', 'tls-rejection'):
+if args.suite == 'history':
+    output=ROOT/'.local/history-test.exe'
+    output.parent.mkdir(exist_ok=True)
+    run([args.compiler, '-std=c++17', '-O2', '-Wall', '-Wextra', '-static', '-pthread', '-municode',
+         '-DWIN32_LEAN_AND_MEAN', '-DNOMINMAX', '-I'+str(ROOT/'src'), '-I'+str(ROOT/'third_party'),
+         ROOT/'tests/history/driver.cpp', ROOT/'src/core/history.cpp', '-o', output])
+    run([sys.executable,ROOT/'tests/history/test_history.py',output])
+elif args.suite in ('core', 'net', 'tls-rejection'):
     target = 'core' if args.suite == 'core' else 'net'
     output = ROOT / '.local' / ('session_test.exe' if target == 'core' else 'transport-test.exe')
     output.parent.mkdir(exist_ok=True)
@@ -29,4 +36,5 @@ if args.suite in ('core', 'net', 'tls-rejection'):
         script = 'test_tls_rejection.py' if args.suite == 'tls-rejection' else 'test_transport.py'
         run([sys.executable, ROOT/'tests/net'/script, output])
 else:
-    run([sys.executable, ROOT/'tests/ui'/('review.py' if args.suite == 'ui-review' else 'smoke.py')])
+    script={'ui-review':'review.py','ui-history':'history_restart.py'}.get(args.suite,'smoke.py')
+    run([sys.executable, ROOT/'tests/ui'/script])

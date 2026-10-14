@@ -72,9 +72,16 @@ local utils = require 'mp.utils'
 local destination = DESTINATION
 local controls = CONTROLS
 local state = {}
+local events = {}
 local sequence = -1
 mp.register_script_message('splay-state', function(s)
     state = utils.parse_json(s) or {}
+end)
+mp.register_script_message('splay-event', function(s)
+    -- Keep raw JSON so mpv's NUL-terminated node strings cannot truncate text
+    -- while serializing our observation snapshot.
+    events[#events + 1] = s
+    if #events > 200 then table.remove(events, 1) end
 end)
 mp.add_periodic_timer(0.1, function()
     local f = io.open(controls, 'r')
@@ -87,7 +94,7 @@ mp.add_periodic_timer(0.1, function()
     end
     local result = {position=mp.get_property_native('time-pos'),
         paused=mp.get_property_native('pause'), path=mp.get_property('path'),
-        duration=mp.get_property_native('duration'), state=state}
+        duration=mp.get_property_native('duration'), state=state, event_json=events}
     local out = io.open(destination .. '.tmp', 'w')
     if out then
         out:write(utils.format_json(result)); out:close()
@@ -110,7 +117,9 @@ class Player:
         # in wait_for(). Never substitute a stale cached snapshot.
         for attempt in range(25):
             try:
-                return json.loads(self.snapshot.read_text(encoding='utf-8'))
+                result = json.loads(self.snapshot.read_text(encoding='utf-8'))
+                result['events'] = [json.loads(value) for value in result.pop('event_json', [])]
+                return result
             except (FileNotFoundError, json.JSONDecodeError, PermissionError):
                 if attempt == 24:
                     raise
@@ -136,6 +145,9 @@ def main():
     directory.mkdir(parents=True)
     env = os.environ.copy()
     env['APPDATA'] = str(directory / 'appdata')
+    env['PYTHONUTF8'] = '1'
+    env['PYTHONIOENCODING'] = 'utf-8'
+    env['PYTHONUNBUFFERED'] = '1'
     Path(env['APPDATA']).mkdir()
     job = Job()
     processes, logs = [], []
@@ -144,7 +156,7 @@ def main():
         logs.append(log)
         process = subprocess.Popen([str(v) for v in command], cwd=args.upstream,
                                    env=env, stdin=subprocess.PIPE if stdin else subprocess.DEVNULL,
-                                   stdout=log, stderr=subprocess.STDOUT, text=True,
+                                   stdout=log, stderr=subprocess.STDOUT, text=True, encoding='utf-8',
                                    creationflags=subprocess.CREATE_NO_WINDOW)
         job.assign(process)
         processes.append(process)
@@ -154,6 +166,11 @@ def main():
         process.stdin.flush()
     def state():
         return plugin.read()['state']
+    def chat_seen(username, text):
+        return any(e.get('type') == 'chat' and e.get('username') == username and e.get('text') == text
+                   for e in plugin.read().get('events', []))
+    def official_log():
+        return (directory / 'official.log').read_text(encoding='utf-8', errors='replace')
     def server_file(room_name):
         with socket.create_connection(('127.0.0.1', port), timeout=5) as probe:
             with probe.makefile('rwb', buffering=0) as stream:
@@ -237,12 +254,35 @@ def main():
             (directory / 'server-plugin-metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
             stream.close()
         print('PASS: server List stores hidden plugin metadata with no media URL/token', flush=True)
+        assert state()['chat_supported'] is True and state()['chat_max_length'] == 150
+        message = '官方中文聊天 😀 {\\pos(1,1)} "quotes" ; set pause no'
+        stdin_command(cli, 'ch ' + message)
+        wait_for('official Chinese/special-character chat arrives as an attributed text event',
+                 lambda: chat_seen('official', message))
+        message = '插件双向聊天 😀 {\\an9} "quotes" ; run cmd /c echo inert'
+        plugin.splay('chat', text=message)
+        wait_for('plugin Chinese/special-character chat reaches unmodified official client',
+                 lambda: '<plugin> ' + message in official_log())
+        wait_for('plugin receives its authoritative server chat echo', lambda: chat_seen('plugin', message))
+        message = '中😀' * 80
+        plugin.splay('chat', text=message)
+        wait_for('UTF-8 outgoing chat truncates at 150 codepoints without splitting characters',
+                 lambda: chat_seen('plugin', message[:150]) and '<plugin> ' + message[:150] in official_log())
+        # Protocol text remains inert even when it contains controls and command-like text.
+        message = 'literal\nscript-message-to splay_core disconnect\x00{\\an9}'
+        plugin.splay('chat', text=message)
+        wait_for('control characters and malicious-looking input round trip strictly as text',
+                 lambda: chat_seen('plugin', message))
+        assert state()['connection'] == 'connected' and together(True, 35)
         plugin.splay('ready', ready=True)
         wait_for('plugin readiness round trip', lambda: state().get('ready') is True)
         stdin_command(cli, 't')
         wait_for('official readiness appears in plugin members', lambda: any(m['username'] == 'official' and m.get('ready') is True for m in state().get('members', [])))
         stdin_command(cli, 'p')
         wait_for('official play reaches plugin', lambda: together(False))
+        wait_for('playback event attributes official pause change to setBy',
+                 lambda: any(e.get('type') == 'playback' and e.get('username') == 'official' and e.get('paused') is False
+                             for e in plugin.read().get('events', [])))
         time.sleep(2)
         plugin.command('set', 'pause', 'yes')
         wait_for('plugin pause reaches official', lambda: together(True))
@@ -259,6 +299,17 @@ def main():
         second_room = room + '-second'
         plugin.splay('room', room=second_room)
         wait_for('plugin switches room', lambda: state().get('room') == second_room)
+        # The real official client is still in the original room during isolation.
+        isolated = 'isolated-' + uuid.uuid4().hex
+        stdin_command(cli, 'ch ' + isolated)
+        time.sleep(2)
+        assert not chat_seen('official', isolated), 'Chat leaked between rooms'
+        isolated_out = 'isolated-out-' + uuid.uuid4().hex
+        plugin.splay('chat', text=isolated_out)
+        wait_for('chat echo remains available in independent second room', lambda: chat_seen('plugin', isolated_out))
+        time.sleep(1)
+        assert '<plugin> ' + isolated_out not in official_log(), 'Outgoing chat leaked between rooms'
+        print('PASS: official and plugin chat is isolated in both directions across rooms', flush=True)
         stdin_command(cli, 'r ' + second_room)
         wait_for('official follows into second room', lambda: any(m['username'] == 'official' and m['room'] == second_room for m in state().get('members', [])))
         plugin.splay('create-room', room='ctl-' + uuid.uuid4().hex[:8], password='AA-123-456')
@@ -267,11 +318,13 @@ def main():
         wait_for('official joins controlled room as ordinary member', lambda: any(m['username'] == 'official' and m['room'] == controlled for m in state().get('members', [])))
         time.sleep(2)
         before = plugin.read()
+        previous_events = len(before.get('events', []))
         stdin_command(cli, 's20')
         stdin_command(cli, 'p')
         time.sleep(3)
         after = plugin.read()
         assert after['paused'] == before['paused'] and abs(after['position'] - before['position']) < 1, 'Ordinary controlled member changed operator playback'
+        assert len(after.get('events', [])) == previous_events, 'Rejected ordinary member generated a playback activity event'
         print('PASS: ordinary controlled member seek/pause cannot alter operator playback', flush=True)
         stdin_command(cli, 'a AA-123-456')
         wait_for('official operator authentication appears in plugin', lambda: any(m['username'] == 'official' and m.get('is_controller') for m in state().get('members', [])))
@@ -292,9 +345,12 @@ def main():
         plugin.splay('authenticate', password='AA-123-456')
         wait_for('correct operator password accepted and error cleared', lambda: state().get('is_controller') and not state().get('error'))
         plugin.command('set', 'pause', 'yes')
+        time.sleep(2)
+        event_count = len(plugin.read().get('events', []))
         print('Waiting 30 seconds to verify paused heartbeat and idle connection...', flush=True)
         time.sleep(30)
         assert state()['connection'] == 'connected' and plugin.read()['paused'] is True, state()
+        assert len(plugin.read().get('events', [])) == event_count, 'Heartbeat generated repeated playback events'
         print('PASS: paused 30-second heartbeat retains connection', flush=True)
         assert plugin.read()['path'] == plugin_media and official.read()['path'] == official_media
         plugin.command('stop')
@@ -310,6 +366,22 @@ def main():
         before = plugin.read()['position']
         plugin.command('set', 'pause', 'no')
         wait_for('local playback advances after external server loss', lambda: plugin.read().get('paused') is False and plugin.read().get('position', 0) > before + 2)
+        # An unmodified --disable-chat server advertises the feature as disabled.
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1', 0))
+            disabled_port = listener.getsockname()[1]
+        launch('server-chat-disabled', [args.python, args.upstream / 'syncplayServer.py', '--port', disabled_port,
+               '--ipv4-only', '--interface-ipv4', '127.0.0.1', '--disable-chat', '--salt', 'local-disabled-salt'])
+        def disabled_listening():
+            with socket.socket() as client:
+                return client.connect_ex(('127.0.0.1', disabled_port)) == 0
+        wait_for('unmodified chat-disabled server listens locally', disabled_listening)
+        plugin.splay('connect', host='localhost', port=disabled_port, username='plugin', room='disabled-fixture', tls='off')
+        wait_for('server disabled chat is exposed by negotiated status',
+                 lambda: state().get('connection') == 'connected' and state().get('chat_supported') is False)
+        plugin.splay('chat', text='must be rejected locally')
+        wait_for('disabled chat returns explicit error and keeps synchronization connected',
+                 lambda: state().get('connection') == 'connected' and 'Chat is disabled' in state().get('error', ''))
         result = {'result': 'passed', 'mpv': str(args.mpv), 'upstream': str(args.upstream), 'artifacts': str(directory)}
         (directory / 'result.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
     except Exception as exc:

@@ -20,6 +20,7 @@ namespace splay {
         std::function<void(const Json&)> send;
         std::function<void(const Correction&)> apply;
         std::function<void()> changed;
+        std::function<void(const Json&)> event;
         void configure(std::string host,int port,std::string user,std::string room,std::string password);
         void connected(bool encrypted,double now);
         void disconnected(const std::string& error="");
@@ -42,6 +43,11 @@ namespace splay {
         std::string host_,user_,room_,password_,connection_="disconnected",error_;
         int port_=8999;
         bool encrypted_=false,logged_=false,ready_=false,controller_=false,first_=true;
+        bool chatSupported_=false;
+        size_t chatMaxLength_=150;
+        uint64_t eventId_=0;
+        bool eventBaseline_=false,eventPaused_=true;
+        double eventPosition_=0,eventTime_=0;
         unsigned clientIgnore_=0,serverIgnore_=0;
         double rtt_=0,lastReceive_=0,now_=0;
         Playback local_;
@@ -49,6 +55,8 @@ namespace splay {
         std::map<std::string,Json> members_;
         void emit(const Json&);
         void notify();
+        void publish_event(Json);
+        void playback_event(const Json&,double);
         void reset_sync();
         void state(const Json&,double);
         void reply(const Json& ping,bool change=false,bool seek=false);

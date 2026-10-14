@@ -7,10 +7,13 @@ ROOT = Path(__file__).resolve().parents[1]
 files = {
     'scripts/splay_core.dll': ROOT/'build/splay_core.dll',
     'scripts/splay.lua': ROOT/'scripts/splay.lua',
+    'scripts/splay_overlay.lua': ROOT/'scripts/splay_overlay.lua',
     'script-opts/splay.conf.example': ROOT/'script-opts/splay.conf.example',
     'INSTALL.txt': ROOT/'packaging/INSTALL.txt',
     'docs/install.md': ROOT/'docs/install.md',
     'docs/validation.md': ROOT/'docs/validation.md',
+    'docs/validation-v2.md': ROOT/'docs/validation-v2.md',
+    'docs/upstream-compatibility.md': ROOT/'docs/upstream-compatibility.md',
     'licenses/SOURCES.json': ROOT/'third_party/SOURCES.json',
 }
 for path in sorted((ROOT/'third_party').rglob('*LICENSE*')):
@@ -20,7 +23,7 @@ for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
     if (ROOT/name).is_file(): files[name] = ROOT/name
 for path in files.values():
     if not path.is_file(): raise SystemExit('Missing package input: '+str(path))
-destination = ROOT/'dist'/'splay-windows-x64-preview.zip'
+destination = ROOT/'dist'/'splay-windows-x64-preview2.zip'
 destination.parent.mkdir(exist_ok=True)
 with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
     for name, path in files.items(): archive.write(path, name)

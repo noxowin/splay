@@ -13,11 +13,7 @@ mp.add_timeout(2,function()
     print('REVIEW_CAPTURE '..opt.mode)
 end)
 mp.add_timeout(2.15,function()
-    if opt.mode=='uosc' then
-        mp.commandv('script-message-to','uosc','select-menu-item','splay','10')
-    else
-        for n=1,9 do mp.add_timeout(n*0.06,function() mp.commandv('keypress','DOWN') end) end
-    end
-    mp.add_timeout(0.7,function() mp.commandv('keypress','ENTER') end)
+    -- Activate the stable action value; menu position changes with history/warnings.
+    mp.commandv('script-message-to','splay','splay-menu-event',utils.format_json({type='activate',value='ready'}))
 end)
 mp.add_timeout(3.4,function() mp.commandv('quit') end)
