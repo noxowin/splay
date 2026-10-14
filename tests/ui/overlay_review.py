@@ -4,9 +4,15 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT/'tests/integration'))
+from interop import Job
+
+# Closing the parent also closes this Windows job, including on interruption.
+job = Job()
 parser = argparse.ArgumentParser()
 parser.add_argument('--mpv', type=Path, default=ROOT / '.local/mpv/runtime/mpv.exe')
 parser.add_argument('--uosc', type=Path, default=ROOT / '.local/uosc/scripts/uosc')
@@ -33,6 +39,7 @@ class Player:
                    str(ROOT / '.local/test-media.mp4')]
         if mode == 'uosc': command += ['--script=' + str(args.uosc)]
         self.process = subprocess.Popen(command, cwd=ROOT, stdout=self.log, stderr=subprocess.STDOUT)
+        job.assign(self.process)
         deadline = time.monotonic() + 12
         while True:
             try:
@@ -218,3 +225,4 @@ for mode in ('native', 'uosc'):
     finally:
         player.close()
 print('Offline overlay review passed. Mocked host; no network/protocol claim.')
+job.close()

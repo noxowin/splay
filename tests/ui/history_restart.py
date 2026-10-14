@@ -7,7 +7,7 @@ import subprocess
 
 root=Path(__file__).resolve().parents[2]
 parser=argparse.ArgumentParser()
-parser.add_argument('--mpv',type=Path,default=root/'.local/mpv/runtime/mpv.com')
+parser.add_argument('--mpv',type=Path,default=root/'.local/mpv/runtime/mpv.exe')
 opts=parser.parse_args()
 config=root/'.local/ui-history-restart'
 (config/'scripts').mkdir(parents=True,exist_ok=True)
