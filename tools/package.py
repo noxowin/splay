@@ -2,8 +2,13 @@
 from pathlib import Path
 import zipfile
 import hashlib
+import argparse
 
 ROOT = Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--output', type=Path, default=ROOT/'dist'/'splay-windows-x64-preview2.zip',
+                    help='Archive path; use a separate directory to preserve earlier downloads')
+args = parser.parse_args()
 files = {
     'scripts/splay_core.dll': ROOT/'build/splay_core.dll',
     'scripts/splay.lua': ROOT/'scripts/splay.lua',
@@ -23,8 +28,8 @@ for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
     if (ROOT/name).is_file(): files[name] = ROOT/name
 for path in files.values():
     if not path.is_file(): raise SystemExit('Missing package input: '+str(path))
-destination = ROOT/'dist'/'splay-windows-x64-preview2.zip'
-destination.parent.mkdir(exist_ok=True)
+destination = args.output.resolve()
+destination.parent.mkdir(parents=True, exist_ok=True)
 with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
     for name, path in files.items(): archive.write(path, name)
 digest = hashlib.sha256(destination.read_bytes()).hexdigest()

@@ -1,10 +1,17 @@
 # splay
 
+[![Windows build](https://github.com/noxowin/splay/actions/workflows/windows.yml/badge.svg)](https://github.com/noxowin/splay/actions/workflows/windows.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+
+**[下载 Windows x64 预览版](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.2)** · [安装说明](docs/install.md) · [问题反馈](https://github.com/noxowin/splay/issues) · [更新记录](CHANGELOG.md)
+
 为 mpv 增加可选的 Syncplay 同步功能。在浏览器或其他软件打开视频后，直接在当前播放器中连接服务器、加入房间并选择是否同步。
 
-**当前状态：Windows x64 第二轮开发预览版。支持连接历史、聊天、状态文字和鼠标按钮；兼容范围和实际测试结果见 [本轮验证记录](docs/validation-v2.md)。**
+An optional Syncplay-compatible plugin for your existing mpv player. Windows x64 first; no separate Syncplay client required at runtime.
 
-首版面向 Windows，以独立插件形式接入用户现有的 mpv 或 mpv 整合包；后续再维护包含同一插件的集成版播放器。仓库先保持私有，初版可用后再准备公开发布。
+**当前版本：`v0.1.0-preview.2`，公开开发预览版，尚非稳定版。** 支持连接历史、聊天、状态文字和鼠标按钮；兼容范围和实际测试结果见 [验证记录](docs/validation-v2.md)。
+
+先以独立插件接入用户现有的 mpv 或 mpv 整合包；后续再评估包含同一插件的集成版播放器。splay 是独立项目，不是 Syncplay 或 mpv 的官方发行版。
 
 ## 使用流程
 
@@ -31,11 +38,17 @@
 
 ## 安装
 
+在 [Release 页面](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.2) 下载 `splay-windows-x64-preview2.zip` 和同名 `.sha256` 文件。GitHub 自动生成的 Source code 压缩包是源码，不含已编译 DLL。可用 PowerShell 的 `Get-FileHash .\splay-windows-x64-preview2.zip -Algorithm SHA256` 与校验文件比对。
+
 关闭播放器，将预览包中的 **三个运行文件** `scripts/splay.lua`、`scripts/splay_core.dll`、`scripts/splay_overlay.lua` 放入该播放器实际使用的配置目录下的 `scripts` 文件夹。升级旧版时替换前两个并新增第三个。便携版通常使用 `mpv.exe` 旁的 `portable_config`；不要覆盖其他配置。
 
 正常打开视频，按 **Shift+s** 进入面板，首次默认服务器为 **syncplay.pl:8999**、昵称为 **splayuser**。填写房间后选择连接。下次打开会恢复上次填写的非密码信息，仍需手动连接。密码仅保留在进程内存，输入时屏幕可见。
 
 完整步骤、uosc 按钮与卸载方式见 [安装说明](docs/install.md)。运行插件不需要安装 Python、Syncplay 客户端或 LuaSocket。
+
+下面是实际 mpv 中的准备状态、播放提示与聊天截图，视频为自行生成的测试画面：
+
+![splay 在 mpv 中显示准备状态、播放提示与双向聊天](docs/images/status-chat.png)
 
 ## 从源码构建
 
@@ -47,13 +60,15 @@ python tools/build.py package --compiler 'C:\path\to\g++.exe'
 
 输出为 `dist/splay-windows-x64-preview2.zip`。源码内固定了 JSON 与 mpv API 头文件；构建不下载依赖。官方客户端、播放器和测试媒体仅用于开发验证，不随插件打包。
 
+GitHub Actions 在 Windows 上构建并运行核心、连接历史与包内容检查。CI 产物用于开发验证，公开下载以 Release 为准。完整播放器互通与界面验证仍按 [贡献指南](CONTRIBUTING.md) 单独执行。
+
 ## 兼容范围
 
 “通用插件”指不依赖某一个 mpv 整合包或启动器。插件仍须被目标 mpv 实例加载，并获得必要接口。禁用脚本、使用另一配置目录、架构不匹配或内嵌 libmpv 的软件需要单独核实。
 
 网络点播首版以各自打开的、可跳转且时间轴一致的媒体为验证对象。浏览器的登录信息、临时链接和请求头不会因为加入房间而自动转移给其他成员。
 
-已测参考宿主报告 `v0.41.0-dev-g41f6a6450`，uosc 为 5.13.0；也使用用户整合包中的 `v0.41.0-560-g05b327c72` 和 uosc 5.12.0 在隔离配置下验证界面与历史恢复。协议互通基线为 Syncplay 1.7.6。完整整合包内其他脚本、真实浏览器调用链和最低兼容版本仍待验证。非 1x 播放暂停同步；不可跳转流只具备有限同步能力。预览版继续保留在私有仓库。
+已测参考宿主报告 `v0.41.0-dev-g41f6a6450`，uosc 为 5.13.0；也使用整合包中的 `v0.41.0-560-g05b327c72` 和 uosc 5.12.0 在隔离配置下验证界面与历史恢复。协议互通基线为 Syncplay 1.7.6。完整整合包内其他脚本、真实浏览器调用链和最低兼容版本仍待验证。非 1x 播放暂停同步；不可跳转流只具备有限同步能力。
 
 ## 项目文档
 
@@ -67,5 +82,8 @@ python tools/build.py package --compiler 'C:\path\to\g++.exe'
 - [开发路线与验收条件](docs/roadmap.md)
 - [参考项目与来源记录](docs/references.md)
 - [协作约定](AGENTS.md)
+- [贡献指南](CONTRIBUTING.md)
+- [安全问题反馈](SECURITY.md)
+- [发布与来源对应](docs/releases.md)
 
-项目自身的开源许可证将在公开发布前确定；当前未授予公开分发许可。第三方组件的来源与许可见 [声明](THIRD_PARTY_NOTICES.md) 和 `third_party/SOURCES.json`。
+项目原创代码以 **GNU GPL 第 3 版（仅此版本，`GPL-3.0-only`）** 发布，完整条款见 [LICENSE](LICENSE)。Copyright (C) 2026 noxowin and splay contributors。第三方组件继续适用各自的许可，见 [声明](THIRD_PARTY_NOTICES.md) 和 [来源清单](third_party/SOURCES.json)。

@@ -7,8 +7,9 @@ import argparse
 root = Path(__file__).resolve().parents[2]
 parser=argparse.ArgumentParser()
 parser.add_argument('--mpv',type=Path,default=root/'.local/mpv/runtime/mpv.exe')
+parser.add_argument('--archive',type=Path,default=root/'dist/splay-windows-x64-preview2.zip')
 opts=parser.parse_args()
-archive = root / 'dist/splay-windows-x64-preview2.zip'
+archive = opts.archive
 config = root / '.local/package-smoke'
 config.mkdir(parents=True, exist_ok=True)
 with zipfile.ZipFile(archive) as bundle:

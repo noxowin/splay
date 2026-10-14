@@ -1,0 +1,100 @@
+name: Windows build and package
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Native Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONUTF8: '1'
+
+    steps:
+      - name: Preserve checkout bytes
+        run: git config --global core.autocrlf false
+
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+
+      - name: Verify original vendored bytes
+        run: python tools/verify_release.py --sources-only
+
+      # UCRT64 is the supported MSYS2 MinGW-w64 GCC environment for Windows x64.
+      # Build/test scripts run under native Windows Python, with an explicit compiler path.
+      - name: Install MinGW-w64 GCC
+        id: msys2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
+          cache: false
+
+      - name: Select and record the compiler
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          $compilerBin = Join-Path $env:MSYS2_LOCATION 'ucrt64\bin'
+          $compiler = Join-Path $compilerBin 'g++.exe'
+          if (-not (Test-Path -LiteralPath $compiler)) { throw 'GCC installation missing' }
+          # cc1plus/collect2 run outside bin and need its DLLs in the inherited PATH.
+          $compilerBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $env:PATH = "$compilerBin;$env:PATH"
+          "CXX=$compiler" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          python --version
+          & $compiler --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $target = & $compiler -dumpmachine
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($target -ne 'x86_64-w64-mingw32') { throw "Unexpected GCC target: $target" }
+          Write-Output "Compiler target: $target"
+
+      - name: Build native plugin
+        run: python tools/build.py build --compiler "$env:CXX"
+
+      - name: Test synchronization core
+        run: python tools/check.py core --compiler "$env:CXX"
+
+      - name: Test connection history
+        run: python tools/check.py history --compiler "$env:CXX"
+
+      - name: Package plugin
+        run: python tools/package.py
+
+      - name: Verify package and checksum
+        run: python tools/verify_release.py --require-license
+
+      # CI artifacts are temporary build outputs, not a GitHub Release.
+      # Full mpv/official Syncplay interoperability remains a separate manual validation.
+      - name: Upload verified package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: splay-windows-x64-${{ github.sha }}
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

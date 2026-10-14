@@ -1,0 +1,22 @@
+name: 功能建议
+description: 描述你希望改善的使用体验
+title: "[Feature] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景与问题
+      description: 当前需要完成什么事情，遇到了什么困难？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望行为
+      description: 描述操作方式及如何判断改进生效。
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 相关环境或替代方案

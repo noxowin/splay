@@ -1,0 +1,33 @@
+name: 问题反馈
+description: 报告可复现的安装、界面或同步问题
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请移除密码、令牌、私人房间名和媒体 URL 参数。安全漏洞请使用仓库 Security 页的私密反馈通道。
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境
+      description: Windows、mpv、splay 和可选 uosc 的版本；配置目录类型及启动方式。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 说明是否能在只加载 splay 的独立配置中复现，保留原有正常配置。
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏日志或截图
+      description: 可选。请确认没有凭据、私人媒体链接和个人信息。

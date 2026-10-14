@@ -1,5 +1,10 @@
 splay Windows x64 development preview
 
+Project code: GNU GPL version 3 only (GPL-3.0-only), see LICENSE.
+Third-party code retains its licenses, see THIRD_PARTY_NOTICES.md and licenses/.
+Matching source and build instructions for v0.1.0-preview.2:
+https://github.com/noxowin/splay/tree/v0.1.0-preview.2
+
 Requires an existing mpv installation with C plugin support and mp.input (tested
 host: official mpv v0.41.0 release MinGW asset, reporting 0.41.0-dev-g41f6a6450).
 No mpv, Python, uosc, or player configuration is bundled.
