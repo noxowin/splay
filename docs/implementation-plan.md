@@ -38,7 +38,7 @@ script-message-to splay_core splay-command <JSON>
 - `authenticate`：`password`，认证当前受控房间操作员。
 - `create-room`：`room`, `password`，按官方协议创建受控房间并进入。
 
-核心到 Lua：`script-message-to splay splay-state <JSON>`。状态包含 `schema:1`、`connection`（`disconnected`/`connecting`/`connected`/`error`）、`encrypted`、`host`、`port`、`username`、`room`、`ready`、`is_controller`、`controlled`、`error`、`members`。成员包含 `username`、`room`、`ready`、`is_controller`、`file`（仅公开或已脱敏的元信息）。状态与日志不包含密码或媒体完整 URL。
+核心到 Lua：`script-message-to splay splay-state <JSON>`。状态包含 `schema:1`、`connection`（`disconnected`/`connecting`/`connected`/`error`）、`encrypted`、`host`、`port`、`username`、`room`、`ready`、`is_controller`、`controlled`、`error`、`warning`、`members`。成员包含 `username`、`room`、`ready`、`is_controller`、`file`（仅公开或已脱敏的元信息）。状态与日志不包含密码或媒体完整 URL。
 
 所有用户或服务器文本作为数据传入，不拼接为可执行 mpv 命令。原生接口校验类型、范围、字符串长度、协议消息尺寸和数值是否有限。
 

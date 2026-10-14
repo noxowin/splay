@@ -2,6 +2,7 @@
 /build/
 /dist/
 /out/
+/cache/
 *.dll
 *.exe
 *.pdb

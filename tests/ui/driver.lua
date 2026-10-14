@@ -1,0 +1,15 @@
+local utils=require 'mp.utils'
+mp.register_script_message('ui-test-command',function(json)
+    print('COMMAND '..json)
+end)
+mp.add_timeout(0.5,function()
+    mp.commandv('script-message-to','splay','splay-state',utils.format_json({schema=1,
+        connection='disconnected',encrypted=false,members={{username='{bad}\\N',room='x',ready=false}},ready=false}))
+    mp.commandv('script-message-to','splay','splay-open','native')
+end)
+mp.add_timeout(0.9,function() mp.commandv('script-message-to','console','disable') end)
+mp.add_timeout(1.1,function() mp.commandv('script-message-to','splay','splay-open','uosc') end)
+mp.add_timeout(1.35,function()
+    print('UOSC_MENU '..(mp.get_property_native('user-data/uosc/menu/type') or 'none'))
+end)
+mp.add_timeout(2,function() print('UI_SMOKE_COMPLETED'); mp.commandv('quit') end)

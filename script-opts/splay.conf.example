@@ -1,0 +1,9 @@
+# Copy selected non-secret settings to script-opts/splay.conf if desired.
+# splay never writes this file and never connects automatically.
+host=localhost
+port=8999
+username=mpv
+room=default
+tls=prefer
+# native uses mp.input; uosc requires separately installed uosc 5.13.
+ui=native

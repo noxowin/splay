@@ -3,8 +3,14 @@
 *.lua text eol=lf
 *.c text eol=lf
 *.h text eol=lf
+*.hpp text eol=lf
 *.cpp text eol=lf
+*.py text eol=lf
+*.example text eol=lf
 *.ps1 text eol=crlf
 *.png binary
 *.jpg binary
 *.ico binary
+
+# Preserve the exact upstream bytes recorded in third_party/SOURCES.json.
+third_party/** -text -whitespace

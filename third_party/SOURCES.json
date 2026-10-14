@@ -1,0 +1,28 @@
+{
+  "json": {
+    "version": "3.12.0",
+    "source": "https://github.com/nlohmann/json/tree/v3.12.0"
+  },
+  "mpv": {
+    "version": "0.41.0",
+    "source": "https://github.com/mpv-player/mpv/tree/v0.41.0"
+  },
+  "files": [
+    {
+      "path": "third_party/json/json.hpp",
+      "sha256": "aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63"
+    },
+    {
+      "path": "third_party/json/LICENSE.MIT",
+      "sha256": "46a65cffd1ea955132d95a8dd921640714a8d6b537d2e4e482d31145ae95b603"
+    },
+    {
+      "path": "third_party/mpv/client.h",
+      "sha256": "3c073236a09cb456c6e80587d5523c8771c32fb22ca014e0f99cc3d43905b75c"
+    },
+    {
+      "path": "third_party/mpv/LICENSE.ISC",
+      "sha256": "405a35f251137ee05f6b023c69710a6ed6fb7a6af7c2d96150d4cc0107e9ad78"
+    }
+  ]
+}
