@@ -1,5 +1,13 @@
 # 发布与来源对应
 
+## v0.1.0-preview.4
+
+[发布页面](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.4) 提供 `splay-windows-x64-preview4.zip` 及同名 `.sha256`。对应源码为 [`v0.1.0-preview.4`](https://github.com/noxowin/splay/tree/v0.1.0-preview.4)，仍为开发预发布。
+
+本版新增当前用户加密凭据、分区状态与消息历史、房间共享播放列表。安装时替换已有三个运行文件，并新增 `scripts/splay_playlist.lua`；原有播放器配置不必替换。
+
+使用本机 MinGW-Builds GCC 14.2.0 重新编译，DLL SHA-256：`04d855caad68984fa862b67dc2adbd8bf03d08850f3ccf799c28c1c563efe9ed`。完整测试范围见 [本轮记录](validation-v4.md)。包包含主许可证、第三方声明、来源和原始许可，凭据/配置/测试播放器不在包内。
+
 ## v0.1.0-preview.3
 
 [发布页面](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.3) 提供 `splay-windows-x64-preview3.zip` 及同名 `.sha256` 校验文件。对应源码为 [`v0.1.0-preview.3`](https://github.com/noxowin/splay/tree/v0.1.0-preview.3)，仍为开发预发布。

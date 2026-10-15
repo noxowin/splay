@@ -6,14 +6,21 @@ import sys
 from build import ROOT, default_compiler
 
 parser = argparse.ArgumentParser()
-parser.add_argument('suite', choices=['core', 'history', 'net', 'ui', 'ui-review', 'ui-history', 'tls-rejection'])
+parser.add_argument('suite', choices=['core', 'history', 'credentials', 'net', 'ui', 'ui-review', 'ui-history', 'tls-rejection'])
 parser.add_argument('--compiler', default=default_compiler())
 args = parser.parse_args()
 
 def run(command):
     subprocess.run(list(map(str, command)), cwd=ROOT, check=True, timeout=180)
 
-if args.suite == 'history':
+if args.suite == 'credentials':
+    output=ROOT/'.local/credentials-test.exe'
+    output.parent.mkdir(exist_ok=True)
+    run([args.compiler, '-std=c++17', '-O2', '-Wall', '-Wextra', '-static', '-pthread', '-municode',
+         '-DWIN32_LEAN_AND_MEAN', '-DNOMINMAX', '-I'+str(ROOT/'src'), '-I'+str(ROOT/'third_party'),
+         ROOT/'tests/credentials/driver.cpp', ROOT/'src/core/credentials.cpp', '-o', output, '-lcrypt32'])
+    run([sys.executable,ROOT/'tests/credentials/test_credentials.py',output])
+elif args.suite == 'history':
     output=ROOT/'.local/history-test.exe'
     output.parent.mkdir(exist_ok=True)
     run([args.compiler, '-std=c++17', '-O2', '-Wall', '-Wextra', '-static', '-pthread', '-municode',

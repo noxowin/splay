@@ -61,12 +61,14 @@ def package_inputs(root, recorded, require_license=False):
         'scripts/splay_core.dll': root / 'build/splay_core.dll',
         'scripts/splay.lua': root / 'scripts/splay.lua',
         'scripts/splay_overlay.lua': root / 'scripts/splay_overlay.lua',
+        'scripts/splay_playlist.lua': root / 'scripts/splay_playlist.lua',
         'script-opts/splay.conf.example': root / 'script-opts/splay.conf.example',
         'INSTALL.txt': root / 'packaging/INSTALL.txt',
         'docs/install.md': root / 'docs/install.md',
         'docs/validation.md': root / 'docs/validation.md',
         'docs/validation-v2.md': root / 'docs/validation-v2.md',
         'docs/validation-v3.md': root / 'docs/validation-v3.md',
+        'docs/validation-v4.md': root / 'docs/validation-v4.md',
         'docs/upstream-compatibility.md': root / 'docs/upstream-compatibility.md',
         'licenses/SOURCES.json': root / 'third_party/SOURCES.json',
         'THIRD_PARTY_NOTICES.md': root / 'THIRD_PARTY_NOTICES.md',
@@ -118,7 +120,7 @@ def verify_package(root, archive_path, recorded, require_license=False):
     expected = sha256(archive_path.read_bytes()) + '  ' + archive_path.name + '\n'
     require(checksum_path.read_text(encoding='ascii') == expected,
             'Release checksum must match archive bytes and filename')
-    print(f'Package: {len(files)} allowlisted files match source, including all three runtime files')
+    print(f'Package: {len(files)} allowlisted files match source, including all four runtime files')
     print('Windows x64 DLL, licenses, notices and ZIP SHA-256 passed; no extra runtime/private files')
     if not (root / 'LICENSE').is_file():
         print('Project LICENSE is not present; third-party licenses were checked')

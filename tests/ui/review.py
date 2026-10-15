@@ -3,7 +3,7 @@ import subprocess
 import argparse
 
 root = Path(__file__).resolve().parents[2]
-output = root / '.local/ui-review-v3'
+output = root / '.local/ui-review-v4'
 output.mkdir(parents=True, exist_ok=True)
 parser=argparse.ArgumentParser()
 parser.add_argument('--mpv',type=Path,default=root/'.local/mpv/runtime/mpv.exe')
@@ -22,10 +22,14 @@ mp.add_timeout(.4,function()
     if opt.page~='disabled' then mp.commandv('script-message-to','splay','splay-action','toggle-enabled') end
 end)
 mp.add_timeout(.8,function()
+    mp.commandv('script-message-to','splay','splay-credential',utils.format_json({schema=1,host='syncplay.pl',port=8999,saved=true}))
     mp.commandv('script-message-to','splay','splay-state',utils.format_json({schema=1,
         connection='connected',encrypted=true,username='本机用户',room='中文房间',ready=false,
+        playlist_supported=true,playlist={files={'第一集.mp4','第二集.mp4'},index=0,user='另一位成员'},
         warning='Synchronization requires playback speed 1.0; synchronization is suspended',
         members={{username='另一位成员',room='中文房间',ready=true}}}))
+    mp.commandv('script-message-to','splay','splay-event',utils.format_json({schema=1,id=1,type='connection',connection='connected'}))
+    mp.commandv('script-message-to','splay','splay-event',utils.format_json({schema=1,id=2,type='ready',username='另一位成员',ready=true}))
     mp.commandv('script-message-to','splay','splay-open',opt.mode)
 end)
 mp.add_timeout(1.1,function()
@@ -42,7 +46,8 @@ mp.add_timeout(2.05,function()
 end)
 mp.add_timeout(2.5,function() mp.commandv('quit') end)
 """,encoding='utf-8')
-for mode, page in ((mode,page) for mode in ('native', 'uosc') for page in ('disabled','home','connection','settings')):
+pages=('disabled','home','connection','endpoint','settings','password-settings','room-actions','members','message-history')
+for mode, page in ((mode,page) for mode in ('native', 'uosc') for page in pages):
     config=output/(mode+'-config')
     config.mkdir(exist_ok=True)
     capture = output / (mode + '-' + page + '.png')
@@ -53,7 +58,7 @@ for mode, page in ((mode,page) for mode in ('native', 'uosc') for page in ('disa
             '--script=' + str(root / 'scripts/splay.lua'),
             '--script=' + str(root / 'tests/ui/splay_core.lua'),
             '--script=' + str(fixture),
-            '--script-opts=review-mode=' + mode + ',review-page=' + page + ',review-output=' + str(capture),
+            '--script-opts=splay-room=中文房间,splay-username=本机用户,review-mode=' + mode + ',review-page=' + page + ',review-output=' + str(capture),
             str(root / '.local/test-media.mp4')]
     if mode == 'uosc':
         args += ['--script=' + str(opts.uosc)]
@@ -67,4 +72,4 @@ for mode, page in ((mode,page) for mode in ('native', 'uosc') for page in ('disa
     if page != 'disabled': assert 'UI_READY_COMMAND' in text, text
     assert capture.is_file() and capture.stat().st_size > 10000, text
     print(mode + '/' + page + ': real media window captured; default off and enabled ready command asserted')
-print('Offline UI review: 8/8 passed; mocked core, no protocol compatibility claim')
+print('Offline UI review: 18/18 passed; mocked core, no protocol compatibility claim')

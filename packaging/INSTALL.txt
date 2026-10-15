@@ -1,91 +1,75 @@
-splay Windows x64 development preview
+splay Windows x64 development preview 4
 
-Project code: GNU GPL version 3 only (GPL-3.0-only), see LICENSE.
-Third-party code retains its licenses, see THIRD_PARTY_NOTICES.md and licenses/.
-Matching source and build instructions for v0.1.0-preview.3:
-https://github.com/noxowin/splay/tree/v0.1.0-preview.3
+Project: GPL-3.0-only. See LICENSE and THIRD_PARTY_NOTICES.md.
+Matching source: https://github.com/noxowin/splay/tree/v0.1.0-preview.4
+Chinese instructions: docs/install.md. Tested scope: docs/validation-v4.md.
 
-Requires an existing mpv installation with C plugin support and mp.input (tested
-host: official mpv v0.41.0 release MinGW asset, reporting 0.41.0-dev-g41f6a6450).
-No mpv, Python, uosc, or player configuration is bundled.
+Install into your existing mpv configuration (close the player first):
+Copy ALL FOUR runtime files into its scripts folder:
+  scripts/splay.lua
+  scripts/splay_core.dll
+  scripts/splay_overlay.lua
+  scripts/splay_playlist.lua
+Back up old splay files before replacing them. Keep mpv.conf, input.conf,
+uosc.conf and other scripts. No player, Python or Syncplay client is bundled.
+Requires Windows x64 mpv with C plugins and mp.input; uosc is optional.
 
-Manual installation (close mpv first):
-1. Find your existing mpv configuration directory (normally %APPDATA%\mpv;
-   portable installations use portable_config alongside mpv.exe).
-2. Copy scripts\splay.lua, scripts\splay_core.dll and scripts\splay_overlay.lua
-   to its scripts folder. Back up existing splay files before replacing them.
-   Upgrading replaces all three runtime files.
-3. Optionally copy selected settings from script-opts\splay.conf.example to
-   script-opts\splay.conf. Do not store passwords. The example is not auto-installed.
-4. Start mpv normally, preserving your usual media and arguments. Press
-   Shift+s for the native panel, or move the mouse near the bottom and click
-   the small Sync icon. The first menu item enables/disables splay.
-   The Shift+s binding is non-forced and can be
-   overridden in your input.conf. Alternative: script-message-to splay splay-open.
+Open media normally. Shift+s or the bottom Sync icon opens the menu.
+Each new player starts with splay DISABLED. Enable, choose a room, then connect.
+Defaults: syncplay.pl:8999, nickname splayuser, no default room.
+Existing input.conf wins over ordinary shortcut bindings. Explicit binding:
+  SHIFT+s script-message-to splay splay-open
 
-First-run defaults: syncplay.pl:8999 and nickname splayuser.
-splay starts DISABLED in every new player process: no connection, status overlay,
-or Enter shortcut takeover. Enable it, then enter host, port, nickname, room,
-server password and TLS policy and select Connect. There is no default room;
-enter or explicitly select one before connecting. Reconnect is manual; disabling leaves
-local playback running. Password prompts are visible to people looking at the
-screen. mp.input keeps text in process memory, uses unique password prompt IDs,
-and is never given a persistent history path. Submitted text may remain in
-mpv console input history for this process. Clearing splay memory does not
-clear the console history; close mpv to release the process. Passwords are never written by
-splay. Treat debug/trace IPC logs outside splay as sensitive.
+Non-secret form/history is kept in splay-history.json in the active config folder.
+Server passwords are remembered separately in splay-credentials.json, encrypted
+with Windows current-user DPAPI and keyed by host/port. Password settings let you
+delete saved credentials or disable remembering. With remembering off, stored
+passwords are not used. Set remember_password=no for a persistent opt-out.
+history_enabled=no only disables non-secret history. Neither store auto-connects.
+Credentials are not portable across Windows accounts/machines. Operator passwords
+are not remembered. Never place passwords in splay.conf. Password prompts are
+visible on screen and may remain in mpv's in-memory console history; external
+debug/trace IPC logs can contain secrets. Do not publish private runtime files.
 
-Connection history is stored in splay-history.json inside the active mpv config
-directory. It remembers non-secret fields and multiple profiles. Selecting a
-profile fills the form and clears the in-memory password; it does not connect.
-Draft settings can retain an empty room; complete profiles require a room.
-Legacy Default room history is not automatically filled, but remains selectable.
-Remove room=default from an old splay.conf if you want an empty first-run room.
-History overrides first-run defaults from splay.conf. Set history_enabled=no
-to disable reading/saving history. Passwords and chats are not saved to disk.
+Enter opens chat while connected and media loaded; Enter sends, Esc cancels.
+A separate chat icon appears beside Sync while connected. Disabling restores
+the original Enter action. Shift+h opens the last 300 session messages (chat,
+playback, seeks, connections, members and playlist events). History stays across
+room changes/disconnects, but is not saved after process exit.
 
-Only while enabled, the top-left overlay shows connection/readiness, room,
-playback actions and chat. The small icon opens a compact menu; connection,
-members and settings have separate pages. The menu can hide status/buttons;
-status_osd=no and button_enabled=no are persistent configuration options.
-The standalone fallback uses button_bottom=48 and button_right=22 (scaled).
-Remove an old button_bottom=85 override to use the new default position.
-When enabled, connected, chat supported and media loaded, Enter opens chat;
-Enter sends and Esc cancels. Other menus/input keep their own keys. Disabling
-restores the original Enter action (for example fullscreen).
-Chat history is limited to 100 messages in the current room/connection and is
-cleared when changing rooms or disconnecting. Server chat limits are respected.
+Left notices expire after 5 seconds by default. Right room panel shows members,
+readiness/current file and shared playlist position. While playing it hides
+according to mouse inactivity and the existing cursor-autohide policy; when
+paused it stays visible. No cursor options are overwritten.
+User-initiated unpause marks the user ready; remote unpause does not.
 
-TLS prefer negotiates encryption; a server explicitly lacking TLS may permit
-plaintext. require refuses plaintext. off intentionally disables TLS. Certificate
-and handshake failures must not silently fall back to plaintext.
+Shared room playlist supports add/import/reorder/remove and explicit selection.
+Joining or receiving a list never loads media. Follow is OFF by default and
+resets on room changes. Enable it explicitly to follow selection/advance at EOF.
+Only local basenames are imported; network entries require explicit sharing.
+Match known local files/current directory or bind a local file. Unknown HTTP(S)
+URLs need item-specific confirmation; remote absolute paths/other schemes are
+not automatically opened. No media is transmitted. Controlled-room permissions
+apply. Limits: 250 items/10000 Unicode characters and official 16 KiB wire line.
 
-Create controlled room: enter room name and a Syncplay operator password of form
-AB-123-456. Keep that password yourself; splay does not persist it.
+Optional settings are in script-opts/splay.conf.example (not auto-installed).
+status_osd=no, room_panel=no or button_enabled=no hide the corresponding UI.
+Standalone offsets: button_bottom=48, button_right=22. Remove an old
+button_bottom=85 override to use these defaults. uosc controls are extended only
+in memory for this process, preserving unrelated buttons and config files.
 
-Optional uosc (tested 5.12/5.13): script-message-to splay splay-open uosc opens the menu.
-splay extends a known uosc controls layout in memory for this process, retaining
-other buttons and options. It never writes uosc.conf. Existing button:splay is
-not duplicated. With no readable controls declaration, a standalone icon is used;
-you may alternatively place button:splay in your own controls layout.
-Native panel works without uosc. Set ui=uosc only when uosc is installed.
+TLS prefer allows plaintext only when the server explicitly lacks TLS; require
+refuses plaintext. Certificate/handshake failures never downgrade. Reconnect is
+manual. Joining keeps current media/arguments; explicitly selecting/following
+playlist items is a separate request to load media. No automatic all-ready start.
 
-Automation via mpv IPC: script-message-to splay splay-command <JSON>, where JSON
-uses the command schema in docs/implementation-plan.md in the source repository.
-This interface accepts secrets; use protected local IPC and avoid shell history.
+Automation: script-message-to splay splay-command <JSON>. Connect requests from
+automation explicitly choose remember_password/use_saved_password; UI defaults
+are not silently applied. Use protected local IPC and avoid logging secrets.
 
-Uninstall (close mpv first): remove only scripts\splay.lua,
-scripts\splay_core.dll and scripts\splay_overlay.lua. Optionally remove your own
-script-opts\splay.conf, splay-history.json and splay-history.json.lock.
-Never remove the scripts/configuration directory or other files.
+Uninstall: close mpv, remove only the four splay runtime files and any splay-only
+settings you added. Optionally delete splay-history.json, splay-credentials.json
+and their .lock files. Never remove the whole configuration/scripts directory.
 
-This preview requires the validation record in the source repository before
-production use. Tested behavior and limitations are listed there. No automatic
-connection, media loading, configuration overwrite, or playlist sharing occurs.
-
-Chinese installation instructions are included at docs/install.md.
-The included docs/validation-v3.md records current tested behavior and limits;
-validation-v2.md and validation.md are earlier archives. Upstream update impact is
-explained in docs/upstream-compatibility.md.
-The adjacent splay-windows-x64-preview3.zip.sha256 file contains the archive
-SHA-256 checksum; it is distributed alongside, not inside, the ZIP.
+The adjacent splay-windows-x64-preview4.zip.sha256 checks the ZIP; it is not inside
+the ZIP. Earlier validation files are retained as historical records.

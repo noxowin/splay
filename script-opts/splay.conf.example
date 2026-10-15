@@ -4,6 +4,9 @@
 # History is separate: ~~/splay-history.json.
 # Set history_enabled=no to use these defaults on every launch and disable saves.
 history_enabled=yes
+# Windows current-user DPAPI; separate encrypted file: ~~/splay-credentials.json.
+# No passwords belong in this configuration. Disable to use process memory only.
+remember_password=yes
 host=syncplay.pl
 port=8999
 username=splayuser
@@ -20,5 +23,9 @@ button_enabled=yes
 button_bottom=48
 button_right=22
 overlay_font_size=22
-overlay_chat_ttl=12
+overlay_chat_ttl=5
 overlay_chat_lines=4
+overlay_message_ttl=5
+room_panel=yes
+# Fallback when the player does not expose a usable cursor-autohide option.
+room_idle_timeout=3

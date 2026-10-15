@@ -14,9 +14,7 @@ local function publish()
         title='同步播放',enabled=state.enabled,items={
             {title=state.enabled and '关闭同步播放' or '启用同步播放',value='toggle-enabled'},
             {title='连接设置…',value='settings'},
-            {title='房间与成员…',value='members',selectable=state.enabled},
             {title=state.ready and '取消准备' or '我已准备',value='ready',selectable=state.enabled and state.connection=='connected'},
-            {title='发送聊天…',value='chat',selectable=state.enabled and state.connection=='connected'},
             {title='服务器历史…',value='history'}}}))
 end
 mp.register_script_message('splay-overlay-ready',function() action('handshake',true); publish() end)

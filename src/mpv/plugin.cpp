@@ -2,6 +2,7 @@
 #include "../../third_party/mpv/client.h"
 #include "../core/session.hpp"
 #include "../core/history.hpp"
+#include "../core/credentials.hpp"
 #include "../net/transport.hpp"
 #include <chrono>
 #include <cmath>
@@ -37,6 +38,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
         splay::Transport transport;
         splay::Session session;
         splay::History history;
+        splay::Credentials credentials;
         double suppress_until=0,next_sample=0;
         bool pending_seek=false;
         bool loading=false;
@@ -47,6 +49,11 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
         auto publish=[&](){
             auto payload=session.status().dump(-1,' ',false,splay::Json::error_handler_t::replace);
             const char* args[]={"script-message-to","splay","splay-state",payload.c_str(),nullptr};
+            mpv_command(h,args);
+        };
+        auto publish_credential=[&](const splay::Json& result){
+            auto payload=result.dump(-1,' ',false,splay::Json::error_handler_t::replace);
+            const char* args[]={"script-message-to","splay","splay-credential",payload.c_str(),nullptr};
             mpv_command(h,args);
         };
         session.send=[&](const splay::Json& j){
@@ -128,7 +135,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                 auto* m=static_cast<mpv_event_client_message*>(event->data);
                 if(m&&m->num_args==2&&std::strcmp(m->args[0],"splay-command")==0){
                     try{
-                        if(std::strlen(m->args[1])>8192)throw std::runtime_error("Command too large");
+                        if(std::strlen(m->args[1])>131072)throw std::runtime_error("Command too large");
                         auto c=splay::Json::parse(m->args[1]);
                         if(!c.is_object())throw std::runtime_error("Invalid command");
                         auto action=text(c,"action",32);
@@ -141,6 +148,11 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                             const char* args[]={"script-message-to","splay","splay-history",payload.c_str(),nullptr};
                             mpv_command(h,args);
                         }
+                        else if(action=="credential-init"||action=="credential-status"||action=="credential-save"||action=="credential-delete"){
+                            auto result=credentials.handle(c);
+                            if(c.contains("request_id")&&c["request_id"].is_number_integer())result["request_id"]=c["request_id"];
+                            publish_credential(result);
+                        }
                         else if(action=="status")publish();
                         else if(action=="disconnect"){
                             transport.disconnect();
@@ -151,7 +163,8 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                             expected_pause.reset();
                         }
                         else if(action=="connect"){
-                            auto host=text(c,"host",253),user=text(c,"username",128),room=text(c,"room",256),pw=text(c,"password",1024,true),tls=text(c,"tls",16,true);
+                            auto host=splay::Credentials::normalize_host(text(c,"host",1024)),user=text(c,"username",128),room=text(c,"room",256),pw=text(c,"password",1024,true),tls=text(c,"tls",16,true);
+                            struct SecretGuard {std::string& value;~SecretGuard(){splay::erase_secret(value);}} password_guard{pw};
                             int port=8999;
                             if(c.contains("port")){
                                 if(!c["port"].is_number_integer())throw std::runtime_error("Invalid port");
@@ -163,6 +176,12 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                             if(tls=="require")mode=splay::TlsMode::Require;
                             else if(tls=="off")mode=splay::TlsMode::Off;
                             else if(!tls.empty()&&tls!="prefer")throw std::runtime_error("Invalid TLS mode");
+                            if(pw.empty()&&c.value("use_saved_password",false))pw=credentials.password(host,port);
+                            else if(!pw.empty()&&c.value("remember_password",false)){
+                                const auto result=credentials.handle({{"action","credential-save"},{"host",host},{"port",port},{"password",pw}});
+                                publish_credential(result);
+                                if(result.contains("error"))throw std::runtime_error(result["error"].get<std::string>());
+                            }
                             transport.disconnect();
                             pending_seek=false;
                             expected_seek.reset();

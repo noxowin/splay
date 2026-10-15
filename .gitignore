@@ -24,6 +24,7 @@ __pycache__/
 /portable_config/
 /local-config/
 /splay-history.json*
+/splay-credentials.json*
 .env
 .env.*
 !.env.example

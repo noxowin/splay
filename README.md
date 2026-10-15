@@ -3,13 +3,13 @@
 [![Windows build](https://github.com/noxowin/splay/actions/workflows/windows.yml/badge.svg)](https://github.com/noxowin/splay/actions/workflows/windows.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-**[下载 Windows x64 预览版](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.3)** · [安装说明](docs/install.md) · [问题反馈](https://github.com/noxowin/splay/issues) · [更新记录](CHANGELOG.md)
+**[下载 Windows x64 预览版](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.4)** · [安装说明](docs/install.md) · [问题反馈](https://github.com/noxowin/splay/issues) · [更新记录](CHANGELOG.md)
 
 为 mpv 增加可选的 Syncplay 同步功能。在浏览器或其他软件打开视频后，直接在当前播放器中连接服务器、加入房间并选择是否同步。
 
 An optional Syncplay-compatible plugin for your existing mpv player. Windows x64 first; no separate Syncplay client required at runtime.
 
-**当前版本：`v0.1.0-preview.3`，公开开发预览版，尚非稳定版。** 默认关闭，通过小图标或 Shift+s 按需启用；支持连接历史、聊天和状态文字。兼容范围和实际测试结果见 [验证记录](docs/validation-v3.md)。
+**当前版本：`v0.1.0-preview.4`，公开开发预览版，尚非稳定版。** 默认关闭，通过小图标或 Shift+s 按需启用；支持加密密码记忆、房间共享播放列表、聊天和分区状态显示。兼容范围和实际测试结果见 [验证记录](docs/validation-v4.md)。
 
 先以独立插件接入用户现有的 mpv 或 mpv 整合包；后续再评估包含同一插件的集成版播放器。splay 是独立项目，不是 Syncplay 或 mpv 的官方发行版。
 
@@ -27,22 +27,25 @@ An optional Syncplay-compatible plugin for your existing mpv player. Windows x64
 
 - 兼容现有 Syncplay 服务器，并与官方客户端互通。
 - 连接、断开、切换房间，以及明确的连接状态与错误提示。
-- 成员列表、准备状态、受控房间及操作员认证。
+- 成员列表、准备状态、受控房间及操作员认证；主动开始播放时自动准备。
 - 播放、暂停、跳转、进度纠偏与手动重连。
 - 记住服务器、端口、昵称、房间、TLS；支持完整连接组合和单个字段历史。
-- 与官方客户端双向聊天，显示本房间聊天记录、准备状态和播放操作提示。
+- 按服务器地址和端口记住密码，以 Windows 当前用户加密保存，可删除或停用。
+- 与官方客户端双向聊天；左上角显示短时消息，右上角显示成员、文件和共享列表当前项，播放时随鼠标闲置隐藏。
+- Shift+h 查看本次进程最近 300 条消息，包含聊天、连接、成员、播放、跳转和列表操作。
+- 房间共享列表支持添加、导入本机队列、排序、删除和选集；可显式开启本机跟随及播完下一项。
 - 紧凑图标、小菜单与分级设置；有可用 uosc 布局时将入口加入现有控制条，无 uosc 时提供独立入口。
 - 保留已有播放器配置、当前媒体和平台传入的播放参数。
 
-共享播放列表、自动获取他人媒体和自动重连不在本版范围内。准备状态用于查看与切换，不自动实现“全员准备后开播”。
+共享列表不传输视频。加入房间不会换片，列表跟随默认关闭；本机文件需能匹配或手动绑定，陌生网络地址需逐项确认。自动重连和“全员准备后自动开播”尚未实现。
 
 ## 安装
 
-在 [Release 页面](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.3) 下载 `splay-windows-x64-preview3.zip` 和同名 `.sha256` 文件。GitHub 自动生成的 Source code 压缩包是源码，不含已编译 DLL。可用 PowerShell 的 `Get-FileHash .\splay-windows-x64-preview3.zip -Algorithm SHA256` 与校验文件比对。
+在 [Release 页面](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.4) 下载 `splay-windows-x64-preview4.zip` 和同名 `.sha256` 文件。GitHub 自动生成的 Source code 压缩包是源码，不含已编译 DLL。可用 PowerShell 的 `Get-FileHash .\splay-windows-x64-preview4.zip -Algorithm SHA256` 与校验文件比对。
 
-关闭播放器，将预览包中的 **三个运行文件** `scripts/splay.lua`、`scripts/splay_core.dll`、`scripts/splay_overlay.lua` 放入该播放器实际使用的配置目录下的 `scripts` 文件夹。升级时替换这三个文件。便携版通常使用 `mpv.exe` 旁的 `portable_config`；不要覆盖其他配置。
+关闭播放器，将预览包中的 **四个运行文件** `scripts/splay.lua`、`scripts/splay_core.dll`、`scripts/splay_overlay.lua`、`scripts/splay_playlist.lua` 放入该播放器实际使用的配置目录下的 `scripts` 文件夹。升级时替换前三个文件并新增播放列表模块。便携版通常使用 `mpv.exe` 旁的 `portable_config`；不要覆盖其他配置。
 
-正常打开视频，按 **Shift+s** 进入菜单并启用，首次默认服务器为 **syncplay.pl:8999**、昵称为 **splayuser**，房间留空，必须填写或选择后才能连接。下次打开会恢复上次填写的非密码信息，仍需手动启用和连接。密码仅保留在进程内存，输入时屏幕可见。
+正常打开视频，按 **Shift+s** 进入菜单并启用，首次默认服务器为 **syncplay.pl:8999**、昵称为 **splayuser**，房间留空，必须填写或选择后才能连接。下次打开会恢复连接表单和已保存的服务器密码，仍需手动启用和连接。密码使用 Windows 当前用户加密保存；输入时屏幕可见。
 
 完整步骤、uosc 按钮与卸载方式见 [安装说明](docs/install.md)。运行插件不需要安装 Python、Syncplay 客户端或 LuaSocket。
 
@@ -54,6 +57,10 @@ An optional Syncplay-compatible plugin for your existing mpv player. Windows x64
 
 ![splay 在 mpv 中显示准备状态、播放提示与双向聊天](docs/images/status-chat.png)
 
+共享播放列表保留独立的本机匹配和跟随开关：
+
+![房间共享播放列表](docs/images/shared-playlist.png)
+
 ## 从源码构建
 
 开发需要 Windows x64、Python 3 与 MinGW-w64 GCC（本次使用 GCC 14.2.0）。在项目目录执行：
@@ -62,9 +69,9 @@ An optional Syncplay-compatible plugin for your existing mpv player. Windows x64
 python tools/build.py package --compiler 'C:\path\to\g++.exe'
 ```
 
-输出为 `dist/splay-windows-x64-preview3.zip`。源码内固定了 JSON 与 mpv API 头文件；构建不下载依赖。官方客户端、播放器和测试媒体仅用于开发验证，不随插件打包。
+输出为 `dist/splay-windows-x64-preview4.zip`。源码内固定了 JSON 与 mpv API 头文件；构建不下载依赖。官方客户端、播放器和测试媒体仅用于开发验证，不随插件打包。
 
-GitHub Actions 在 Windows 上构建并运行核心、连接历史与包内容检查。CI 产物用于开发验证，公开下载以 Release 为准。完整播放器互通与界面验证仍按 [贡献指南](CONTRIBUTING.md) 单独执行。
+GitHub Actions 在 Windows 上构建并运行核心、连接历史、加密凭据与包内容检查。CI 产物用于开发验证，公开下载以 Release 为准。完整播放器互通与界面验证仍按 [贡献指南](CONTRIBUTING.md) 单独执行。
 
 ## 兼容范围
 
@@ -78,11 +85,12 @@ GitHub Actions 在 Windows 上构建并运行核心、连接历史与包内容�
 
 - [架构与插件边界](docs/architecture.md)
 - [安装与使用](docs/install.md)
-- [本轮实际验证与限制](docs/validation-v3.md)
+- [本轮实际验证与限制](docs/validation-v4.md)
+- [第三轮验证存档](docs/validation-v3.md)
 - [第二轮验证存档](docs/validation-v2.md)
 - [第一轮验证存档](docs/validation.md)
 - [官方更新的影响与跟进方式](docs/upstream-compatibility.md)
-- [本轮需求与实现边界](docs/iteration-3.md)
+- [本轮需求与实现边界](docs/iteration-4.md)
 - [首版实施计划](docs/implementation-plan.md)
 - [开发路线与验收条件](docs/roadmap.md)
 - [参考项目与来源记录](docs/references.md)

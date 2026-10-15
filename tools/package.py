@@ -6,19 +6,21 @@ import argparse
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--output', type=Path, default=ROOT/'dist'/'splay-windows-x64-preview3.zip',
+parser.add_argument('--output', type=Path, default=ROOT/'dist'/'splay-windows-x64-preview4.zip',
                     help='Archive path; use a separate directory to preserve earlier downloads')
 args = parser.parse_args()
 files = {
     'scripts/splay_core.dll': ROOT/'build/splay_core.dll',
     'scripts/splay.lua': ROOT/'scripts/splay.lua',
     'scripts/splay_overlay.lua': ROOT/'scripts/splay_overlay.lua',
+    'scripts/splay_playlist.lua': ROOT/'scripts/splay_playlist.lua',
     'script-opts/splay.conf.example': ROOT/'script-opts/splay.conf.example',
     'INSTALL.txt': ROOT/'packaging/INSTALL.txt',
     'docs/install.md': ROOT/'docs/install.md',
     'docs/validation.md': ROOT/'docs/validation.md',
     'docs/validation-v2.md': ROOT/'docs/validation-v2.md',
     'docs/validation-v3.md': ROOT/'docs/validation-v3.md',
+    'docs/validation-v4.md': ROOT/'docs/validation-v4.md',
     'docs/upstream-compatibility.md': ROOT/'docs/upstream-compatibility.md',
     'licenses/SOURCES.json': ROOT/'third_party/SOURCES.json',
 }

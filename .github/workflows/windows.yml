@@ -80,6 +80,9 @@ jobs:
       - name: Test connection history
         run: python tools/check.py history --compiler "$env:CXX"
 
+      - name: Test encrypted server credentials
+        run: python tools/check.py credentials --compiler "$env:CXX"
+
       - name: Package plugin
         run: python tools/package.py
 

@@ -60,9 +60,21 @@ assert '3:0:' in out and '0:0:' not in out, out
 
 def oversized(conn):
     receive_line(conn)
-    conn.sendall(b'x' * 16386)
+    conn.sendall(b'x' * 131074)
 out = run('off', oversized)
-assert 'exceeded 16384' in out, out
+assert 'exceeded 131072' in out, out
+
+def unicode_playlist(conn):
+    receive_line(conn)
+    # Official Python JSON encoding uses surrogate pairs for emoji. This is
+    # the complete Syncplay 250-entry/10000-character playlist maximum.
+    import json
+    payload = json.dumps({'Set': {'playlistChange': {'user': 'official',
+                           'files': ['😀' * 40] * 250}}}).encode('ascii')
+    assert 120000 < len(payload) < 131072
+    conn.sendall(payload + b'\r\n')
+out = run('off', unicode_playlist)
+assert '1:0:{"Set":' in out and out.count(r'\ud83d\ude00') == 10000 and 'exceeded' not in out, out[:200]
 
 def stalled(conn):
     receive_line(conn)
@@ -79,4 +91,4 @@ def bulk(conn):
         time.sleep(.0001)
     assert data == (b'{"payload":"' + b'x' * 16000 + b'"}\r\n') * 50
 run('off', bulk, ('127.0.0.1', 'bulk'))
-print('PASS: partial reads, multiple lines, CRLF writes, localhost IPv4 fallback, prefer fallback, require rejection, line cap, bounded stalled disconnect, 800KB queued writes with slow fragmented reads')
+print('PASS: partial reads, multiple lines, CRLF writes, localhost IPv4 fallback, prefer fallback, require rejection, full Unicode playlist, 128KiB line cap, bounded stalled disconnect, 800KB queued writes with slow fragmented reads')

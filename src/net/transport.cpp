@@ -20,7 +20,9 @@
 namespace splay {
 namespace {
 using Clock = std::chrono::steady_clock;
-constexpr size_t MaxLine = 16384, MaxQueue = 1024 * 1024;
+// The official 10000-character playlist limit can expand to 120KB when
+// Python's server JSON serializer escapes supplementary Unicode characters.
+constexpr size_t MaxLine = 131072, MaxQueue = 1024 * 1024;
 std::wstring wide(const std::string& s) {
     int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), int(s.size()), nullptr, 0);
     if (!n) throw std::runtime_error("Invalid UTF-8 hostname");
@@ -186,9 +188,9 @@ struct Transport::Impl {
     }
     bool line(std::string& result) {
         auto end=plaintext.find('\n');
-        if(end==std::string::npos) { if(plaintext.size()>MaxLine+1) throw std::runtime_error("Protocol line exceeded 16384 bytes"); return false; }
+        if(end==std::string::npos) { if(plaintext.size()>MaxLine+1) throw std::runtime_error("Protocol line exceeded 131072 bytes"); return false; }
         size_t size=end; if(size && plaintext[size-1]=='\r') --size;
-        if(size>MaxLine) throw std::runtime_error("Protocol line exceeded 16384 bytes");
+        if(size>MaxLine) throw std::runtime_error("Protocol line exceeded 131072 bytes");
         result=plaintext.substr(0,size); plaintext.erase(0,end+1);
         if(!result.empty() && !MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,result.data(),int(result.size()),nullptr,0)) throw std::runtime_error("Invalid UTF-8 protocol line");
         return true;

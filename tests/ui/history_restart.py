@@ -1,4 +1,4 @@
-"""Auto-load the real DLL and Lua twice from an isolated mpv config."""
+"""Auto-load the real DLL and Lua in three isolated mpv processes."""
 from pathlib import Path
 import argparse
 import json
@@ -13,7 +13,7 @@ opts=parser.parse_args()
 config=root/'.local/ui-history-restart'
 (config/'scripts').mkdir(parents=True,exist_ok=True)
 (config/'script-opts').mkdir(exist_ok=True)
-for source in (root/'build/splay_core.dll',root/'scripts/splay.lua',root/'scripts/splay_overlay.lua'):
+for source in (root/'build/splay_core.dll',root/'scripts/splay.lua',root/'scripts/splay_overlay.lua',root/'scripts/splay_playlist.lua'):
     shutil.copy2(source,config/'scripts'/source.name)
 (config/'script-opts/splay.conf').write_text('host=localhost\nusername=old-example\n',encoding='utf8')
 fixture=dict(host='restored.example',port=9009,username='重启昵称',room='重启房间',tls='require')
@@ -22,14 +22,22 @@ path=config/'splay-history.json'
 path.write_text(json.dumps(dict(schema=1,last=fixture,profiles=[other,fixture],values={})),encoding='utf8')
 blank=dict(fixture,room='')
 for number,stage in enumerate(('profile','draft','restart'),1):
-    result=subprocess.run([str(opts.mpv),'--config-dir='+str(config),'--idle=yes','--vo=null','--ao=null',
-        '--msg-level=all=debug','--script='+str(root/'tests/ui/history_restart_driver.lua'),
-        '--script-opts=history_restart-stage='+stage],
-        cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=12)
+    log_path=config/f'run-{number}.log'
+    try:
+        result=subprocess.run([str(opts.mpv),'--config-dir='+str(config),'--idle=yes','--vo=null','--ao=null',
+            '--msg-level=all=debug','--script='+str(root/'tests/ui/history_restart_driver.lua'),
+            '--script-opts=history_restart-stage='+stage],
+            cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=12)
+    except subprocess.TimeoutExpired as error:
+        output=error.output or b''
+        text=output.decode('utf8',errors='replace') if isinstance(output,bytes) else output
+        log_path.write_text(text,encoding='utf8')
+        raise AssertionError(f'History stage {stage} timed out; partial mpv output saved to {log_path}') from error
     text=result.stdout.decode('utf8',errors='replace')
-    (config/f'run-{number}.log').write_text(text,encoding='utf8')
+    log_path.write_text(text,encoding='utf8')
     assert result.returncode==0 and 'HISTORY_RESTART_SAVED '+stage in text,text
     assert 'HISTORY_RESTART_DISABLED true' in text,text
+    assert 'HISTORY_SHORTCUT_RESTORED true' in text,text
     assert 'Lua error' not in text and 'stack traceback' not in text,text
     data=json.loads(path.read_text(encoding='utf8'))
     assert data['last']==(fixture if stage=='profile' else blank),data

@@ -31,11 +31,89 @@ namespace splay {
         }
         Json safe_file(const Json& j){
             if(!j.is_object()||j.empty())return Json::object();
+            std::string name;
+            auto filename=j.find("name");
+            if(filename!=j.end()&&filename->is_string()){
+                name=filename->get<std::string>();
+                // Keep public filenames useful without exposing a peer's full
+                // path, URL credentials, query parameters or control codes.
+                name=name.substr(0,name.find_first_of("?#"));
+                auto scheme=name.find("://");
+                if(scheme!=name.npos){
+                    auto path=name.find('/',scheme+3);
+                    name=path==name.npos?"":name.substr(path+1);
+                }
+                auto slash=name.find_last_of("/\\");
+                if(slash!=name.npos)name=name.substr(slash+1);
+                std::string clean;
+                size_t count=0;
+                for(unsigned char ch:name){
+                    if(ch<32||ch==127)continue;
+                    if((ch&0xc0)!=0x80&&++count>250)break;
+                    clean+=static_cast<char>(ch);
+                }
+                name=std::move(clean);
+            }
+            double size=0;
+            auto bytes=j.find("size");
+            if(bytes!=j.end()&&bytes->is_number()){
+                auto value=bytes->get<double>();
+                if(std::isfinite(value)&&value>=0&&value<=9e15)size=value;
+            }
             return {
-                {"name","**Hidden filename**"}
-                ,{"duration",number(j,"duration")}
-                ,{"size",0}
+                {"name",name.empty()?"**Hidden filename**":name}
+                ,{"duration",std::max(0.0,number(j,"duration"))}
+                ,{"size",size}
             };
+        }
+        bool version_at_least(const Json& hello,int minor){
+            auto version=hello.find("realversion");
+            if(version==hello.end()||!version->is_string())version=hello.find("version");
+            if(version==hello.end()||!version->is_string())return false;
+            std::smatch match;
+            const auto text=version->get<std::string>();
+            if(!std::regex_search(text,match,std::regex("^([0-9]{1,3})\\.([0-9]{1,3})(?:\\.|$)")))return false;
+            const int major=std::stoi(match[1]),actualMinor=std::stoi(match[2]);
+            return major>1||(major==1&&actualMinor>=minor);
+        }
+        Json playlist_files(const Json& value){
+            if(!value.is_array()||value.size()>250)throw std::runtime_error("Shared playlist must contain at most 250 entries");
+            size_t characters=0;
+            for(const auto& entry:value){
+                if(!entry.is_string())throw std::runtime_error("Invalid shared playlist entry");
+                const auto text=entry.get<std::string>();
+                if(text.empty())throw std::runtime_error("Shared playlist entries cannot be empty");
+                Json(text).dump(); // Validate UTF-8 for direct command calls too.
+                for(unsigned char ch:text){
+                    if(ch<32||ch==127)throw std::runtime_error("Shared playlist entries contain control characters");
+                    if((ch&0xc0)!=0x80&&++characters>10000)throw std::runtime_error("Shared playlist exceeds 10000 characters");
+                }
+            }
+            return value;
+        }
+        Json playlist_index(const Json& value,size_t count,bool nullable){
+            if(nullable&&value.is_null())return nullptr;
+            if(!value.is_number_integer()||value.is_boolean())throw std::runtime_error("Invalid shared playlist index");
+            if(value.is_number_unsigned()&&value.get<uint64_t>()>=count)throw std::runtime_error("Shared playlist index is out of range");
+            const auto index=value.get<int64_t>();
+            if(index<0||static_cast<uint64_t>(index)>=count)throw std::runtime_error("Shared playlist index is out of range");
+            return index;
+        }
+        size_t upstream_json_size(const Json& value){
+            const auto encoded=value.dump(-1,' ',true);
+            size_t bytes=encoded.size();
+            bool quoted=false,escaped=false;
+            for(unsigned char ch:encoded){
+                if(escaped){escaped=false;continue;}
+                if(quoted){
+                    if(ch=='\\')escaped=true;
+                    else if(ch=='"')quoted=false;
+                    else if(ch==127)bytes+=5; // Python ensure_ascii escapes DEL.
+                }
+                else if(ch=='"')quoted=true;
+                else if(ch==','||ch==':')++bytes; // Python's default spaces.
+            }
+            return bytes;
         }
         std::string chat_text(const Json& j,const char* key,size_t limit){
             auto i=j.find(key);
@@ -98,6 +176,18 @@ namespace splay {
         pending_state_=nullptr;
         eventBaseline_=false;
     }
+    void Session::clear_playlist(){
+        playlist_={{"files",Json::array()},{"index",nullptr},{"user",""}};
+        pending_playlist_=Json::object();
+    }
+    void Session::room_changed(const std::string& room){
+        const auto previous=room_;
+        room_=room;
+        controller_=ready_=readyRequested_=false;
+        clear_playlist();
+        reset_sync();
+        if(previous!=room_)publish_event({{"type","room"},{"room",room_},{"previous_room",previous}});
+    }
     bool Session::controlled() const {
         static const std::regex re("^\\+.*:[A-Za-z0-9_]{12}$");
         return std::regex_match(room_,re);
@@ -114,10 +204,15 @@ namespace splay {
         error_.clear();
         logged_=false;
         chatSupported_=false;
+        playlistSupported_=false;
+        readySupported_=true;
+        readyRequested_=false;
+        clear_playlist();
         chatMaxLength_=150;
         members_.clear();
         controller_=ready_=false;
         reset_sync();
+        publish_event({{"type","connection"},{"connection",connection_}});
         notify();
     }
     void Session::connected(bool secure,double now){
@@ -135,7 +230,8 @@ namespace splay {
             ,{"realversion","1.7.6"}
             ,{
                 "features",{
-                    {"sharedPlaylists",false}
+                    {"sharedPlaylists",true}
+                    ,{"featureList",true}
                     ,{"chat",true}
                     ,{"maxChatMessageLength",150}
                     ,{"readiness",true}
@@ -152,8 +248,13 @@ namespace splay {
         );
     }
     void Session::disconnected(const std::string& error){
+        const auto previous=connection_;
+        const auto previousError=error_;
         logged_=false;
         chatSupported_=false;
+        playlistSupported_=false;
+        readyRequested_=false;
+        clear_playlist();
         chatMaxLength_=150;
         connection_=error.empty()?"disconnected":"error";
         error_=error;
@@ -161,6 +262,7 @@ namespace splay {
         members_.clear();
         controller_=ready_=false;
         reset_sync();
+        if(connection_!=previous||error_!=previousError)publish_event({{"type","connection"},{"connection",connection_}});
         notify();
     }
     Json Session::status() const {
@@ -186,6 +288,8 @@ namespace splay {
             ,{"controlled",controlled()}
             ,{"chat_supported",chatSupported_}
             ,{"chat_max_length",chatMaxLength_}
+            ,{"playlist_supported",playlistSupported_}
+            ,{"playlist",playlist_}
             ,{"error",error_}
             ,{"warning",warning}
             ,{"members",members}
@@ -231,11 +335,39 @@ namespace splay {
         }
         );
     }
+    void Session::playlist(const Json& value,bool index){
+        // A malformed optional playlist update must not tear down playback or
+        // replace the last valid authoritative snapshot.
+        try{
+            if(!playlistSupported_)throw std::runtime_error("Shared playlists are disabled or unsupported by this server");
+            if(!value.is_object())throw std::runtime_error("Invalid shared playlist update");
+            std::string user;
+            auto setter=value.find("user");
+            if(setter!=value.end()&&!setter->is_null())user=str(value,"user");
+            Json next=playlist_;
+            if(index)next["index"]=playlist_index(value.at("index"),next["files"].size(),true);
+            else{
+                next["files"]=playlist_files(value.at("files"));
+                // Upstream may send a replacement list without an index. Keep
+                // an existing valid index until its separate index update.
+                if(!next["index"].is_null()&&next["index"].get<size_t>()>=next["files"].size())next["index"]=nullptr;
+            }
+            next["user"]=user;
+            const bool changed=index?next["index"]!=playlist_["index"]:next["files"]!=playlist_["files"];
+            playlist_=std::move(next);
+            error_.clear();
+            if(changed){
+                Json notice={{"type","playlist"},{"action",index?"index":"files"},{"user",user},{"index",playlist_["index"]}};
+                if(!index)notice["files"]=playlist_["files"];
+                publish_event(std::move(notice));
+            }
+        }
+        catch(const std::exception& exception){error_=exception.what();}
+    }
     void Session::set(const Json& j){
         if(j.contains("room")&&j["room"].is_object()){
-            room_=str(j["room"],"name");
-            controller_=false;
-            reset_sync();
+            const auto room=str(j["room"],"name");
+            if(room!=room_)room_changed(room);
             emit({
                 {"List",nullptr}
             }
@@ -244,24 +376,46 @@ namespace splay {
         if(j.contains("user")&&j["user"].is_object())for(auto& item:j["user"].items()){
             auto v=item.value();
             if(!v.is_object())continue;
+            const bool known=members_.count(item.key())!=0;
+            Json old=known?members_[item.key()]:Json::object();
             if(v.contains("event")&&v["event"].is_object()&&v["event"].contains("left")){
                 members_.erase(item.key());
+                if(known)publish_event({{"type","user"},{"action","left"},{"username",item.key()},{"room",old.value("room",room_)}});
                 continue;
             }
-            std::string r=members_.count(item.key())?members_[item.key()].value("room",room_):room_;
+            std::string r=known?old.value("room",room_):room_;
             if(v.contains("room")&&v["room"].is_object())r=str(v["room"],"name");
-            Json old=members_.count(item.key())?members_[item.key()]:Json::object();
             if(!v.contains("isReady")&&old.contains("ready"))v["isReady"]=old["ready"];
             if(!v.contains("controller")&&old.contains("is_controller"))v["controller"]=old["is_controller"];
             if(!v.contains("file")&&old.contains("file"))v["file"]=old["file"];
             member(item.key(),r,v);
+            auto current=members_.find(item.key());
+            if(current==members_.end())continue;
+            if(!known&&v.contains("event")&&v["event"].is_object()&&flag(v["event"],"joined")){
+                publish_event({{"type","user"},{"action","joined"},{"username",item.key()},{"room",r}});
+            }
+            else if(known&&old["room"]!=r){
+                publish_event({{"type","user"},{"action","room"},{"username",item.key()},{"room",r},{"previous_room",old["room"]}});
+            }
+            if(known&&old["file"]!=current->second["file"]){
+                publish_event({{"type","user"},{"action","file"},{"username",item.key()},{"room",r},{"file",current->second["file"]}});
+            }
         }
         if(j.contains("ready")&&j["ready"].is_object()){
             auto& v=j["ready"];
             auto u=str(v,"username");
             if(v.contains("isReady")&&(v["isReady"].is_boolean()||v["isReady"].is_null())){
+                Json previous=members_.count(u)?members_[u]["ready"]:(u==user_?Json(ready_):Json(nullptr));
                 if(members_.count(u))members_[u]["ready"]=v["isReady"];
-                if(u==user_&&v["isReady"].is_boolean())ready_=v["isReady"].get<bool>();
+                if(u==user_){
+                    readyRequested_=false;
+                    if(v["isReady"].is_boolean())ready_=v["isReady"].get<bool>();
+                }
+                if(previous!=v["isReady"]){
+                    Json notice={{"type","ready"},{"username",u},{"ready",v["isReady"]},{"manually_initiated",flag(v,"manuallyInitiated")}};
+                    if(v.contains("setBy")&&v["setBy"].is_string())notice["set_by"]=str(v,"setBy");
+                    publish_event(std::move(notice));
+                }
             }
         }
         if(j.contains("controllerAuth")&&j["controllerAuth"].is_object()){
@@ -279,9 +433,7 @@ namespace splay {
             auto& v=j["newControlledRoom"];
             auto room=str(v,"roomName");
             auto pw=str(v,"password",128);
-            room_=room;
-            controller_=false;
-            reset_sync();
+            room_changed(room);
             emit({
                 {
                     "Set",{
@@ -308,9 +460,11 @@ namespace splay {
             }
             );
         }
+        if(j.contains("playlistChange"))playlist(j["playlistChange"],false);
+        if(j.contains("playlistIndex"))playlist(j["playlistIndex"],true);
     }
     void Session::receive(const std::string& line,double now){
-        if(line.size()>16384){
+        if(line.size()>131072){
             disconnected("Oversized protocol message");
             return;
         }
@@ -324,6 +478,10 @@ namespace splay {
                 return;
             }
             if(!logged_&&j.contains("State")&&j["State"].is_object())pending_state_=j["State"];
+            if(!logged_&&j.contains("Set")&&j["Set"].is_object()){
+                // Official 1.7.6 sends room playlist state before Hello.
+                for(const auto* key:{"playlistChange","playlistIndex"})if(j["Set"].contains(key))pending_playlist_[key]=j["Set"][key];
+            }
             if(j.contains("Hello")){
                 auto& h=j["Hello"];
                 user_=str(h,"username");
@@ -332,10 +490,14 @@ namespace splay {
                 connection_="connected";
                 error_.clear();
                 chatSupported_=false;
+                playlistSupported_=version_at_least(h,4);
+                readySupported_=true;
                 chatMaxLength_=150;
                 auto features=h.find("features");
                 if(features!=h.end()&&features->is_object()){
                     chatSupported_=flag(*features,"chat");
+                    playlistSupported_=flag(*features,"sharedPlaylists",playlistSupported_);
+                    readySupported_=flag(*features,"readiness",true);
                     auto limit=features->find("maxChatMessageLength");
                     if(limit!=features->end()&&limit->is_number_integer()){
                         auto value=limit->get<long long>();
@@ -343,7 +505,11 @@ namespace splay {
                     }
                 }
                 auto pending=pending_state_;
+                const auto pendingPlaylist=pending_playlist_;
+                pending_playlist_=Json::object();
                 reset_sync();
+                publish_event({{"type","connection"},{"connection",connection_}});
+                if(playlistSupported_&&!pendingPlaylist.empty())set(pendingPlaylist);
                 file();
                 if(pending.is_object())state(pending,now);
                 emit({
@@ -464,6 +630,12 @@ namespace splay {
     }
     void Session::local_change(bool seek,double now){
         now_=now;
+        // Only the adapter's explicit local pause-change path reaches this.
+        // A remote correction, load, heartbeat or seek cannot set readiness.
+        if(logged_&&readySupported_&&local_.loaded&&!local_.buffering&&!seek&&!local_.paused&&!ready_&&!readyRequested_){
+            readyRequested_=true;
+            emit({{"Set",{{"ready",{{"isReady",true},{"manuallyInitiated",true}}}}}});
+        }
         if(logged_&&local_.loaded&&!local_.buffering&&std::abs(local_.speed-1)<.001&&(!controlled()||controller_))reply(Json::object(),true,seek);
     }
     void Session::tick(double now){
@@ -479,12 +651,26 @@ namespace splay {
             emit({{"Chat",text}});
             return;
         }
+        if(a=="playlist-set"||a=="playlist-index"){
+            if(!logged_)throw std::runtime_error("Connect to a room before changing the shared playlist");
+            if(!playlistSupported_)throw std::runtime_error("Shared playlists are disabled or unsupported by this server");
+            if(controlled()&&!controller_)throw std::runtime_error("Only room operators can change the shared playlist");
+            Json message;
+            if(a=="playlist-set")message={{"Set",{{"playlistChange",{{"files",playlist_files(c.at("files"))}}}}}};
+            else message={{"Set",{{"playlistIndex",{{"index",playlist_index(c.at("index"),playlist_["files"].size(),false)}}}}}};
+            // Upstream's client and server both inherit Twisted's 16KiB line
+            // limit. Check the complete server echo including its actual
+            // username, Unicode escaping and Python's default separators.
+            auto echo=message;
+            echo["Set"][a=="playlist-set"?"playlistChange":"playlistIndex"]["user"]=user_;
+            if(upstream_json_size(echo)>16384)throw std::runtime_error("Shared playlist is too large for compatible Syncplay clients");
+            emit(message);
+            return;
+        }
         if(!logged_)return;
         if(a=="room"){
             auto r=str(c,"room");
-            room_=r;
-            controller_=ready_=false;
-            reset_sync();
+            room_changed(r);
             emit({
                 {
                     "Set",{

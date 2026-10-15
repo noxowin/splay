@@ -43,7 +43,7 @@ namespace splay {
         std::string host_,user_,room_,password_,connection_="disconnected",error_;
         int port_=8999;
         bool encrypted_=false,logged_=false,ready_=false,controller_=false,first_=true;
-        bool chatSupported_=false;
+        bool chatSupported_=false,playlistSupported_=false,readySupported_=true,readyRequested_=false;
         size_t chatMaxLength_=150;
         uint64_t eventId_=0;
         bool eventBaseline_=false,eventPaused_=true;
@@ -52,6 +52,8 @@ namespace splay {
         double rtt_=0,lastReceive_=0,now_=0;
         Playback local_;
         Json pending_state_;
+        Json pending_playlist_=Json::object();
+        Json playlist_={{"files",Json::array()},{"index",nullptr},{"user",""}};
         std::map<std::string,Json> members_;
         void emit(const Json&);
         void notify();
@@ -61,6 +63,9 @@ namespace splay {
         void state(const Json&,double);
         void reply(const Json& ping,bool change=false,bool seek=false);
         void set(const Json&);
+        void playlist(const Json&,bool index);
+        void clear_playlist();
+        void room_changed(const std::string&);
         void member(const std::string&,const std::string&,const Json&);
         bool controlled() const;
         void file();

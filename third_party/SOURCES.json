@@ -50,10 +50,11 @@
       "compiler": "MinGW-Builds GCC 14.2.0 x86_64-win32-seh-rev0, UCRT, MinGW-w64 runtime v12",
       "source": "https://github.com/niXman/mingw-builds-binaries/releases/tag/14.2.0-rt_v12-rev0",
       "thread_model": "win32",
-      "release_dll_sha256": "024a926e4c1392d3723a1d2a5e78ba04d15fe4d02ef6d1b2509df5e20d35a062",
-      "release_tag": "v0.1.0-preview.3",
+      "release_dll_sha256": "04d855caad68984fa862b67dc2adbd8bf03d08850f3ccf799c28c1c563efe9ed",
+      "release_tag": "v0.1.0-preview.4",
       "preview2_dll_sha256": "95a4ebd71b8413707b6ef75992ac9a3543b01027512cf31ca7395d1dfd822991",
-      "evidence": "g++ -v; objdump -t: MinGW runtime helpers, GCC unwinder and libstdc++ symbols; no pthread symbols found"
+      "evidence": "g++ -v; objdump -t: MinGW runtime helpers, GCC unwinder and libstdc++ symbols; no pthread symbols found",
+      "preview3_dll_sha256": "024a926e4c1392d3723a1d2a5e78ba04d15fe4d02ef6d1b2509df5e20d35a062"
     },
     "mingw_w64": {
       "version": "12.0.0",

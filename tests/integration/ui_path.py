@@ -74,13 +74,14 @@ class Player:
             shutil.copy2(uosc_config, self.config/'script-opts/uosc.conf')
         if args.fonts.is_dir():
             shutil.copytree(args.fonts, self.config/'fonts')
-        for path in (ROOT/'build/splay_core.dll', ROOT/'scripts/splay.lua', ROOT/'scripts/splay_overlay.lua'):
+        for path in (ROOT/'build/splay_core.dll', ROOT/'scripts/splay.lua', ROOT/'scripts/splay_overlay.lua', ROOT/'scripts/splay_playlist.lua'):
             shutil.copy2(path, self.config/'scripts'/path.name)
         self.pipe_name = r'\\.\pipe\splay_full_'+uuid.uuid4().hex
         command = [args.mpv, '--load-scripts=no', '--config-dir='+str(self.config),
             '--script='+str(self.config/'scripts/splay_core.dll'),
             '--script='+str(self.config/'scripts/splay.lua'),
             '--script='+str(self.config/'scripts/splay_overlay.lua'),
+            '--script='+str(self.config/'scripts/splay_playlist.lua'),
             '--input-conf='+str(self.input_config),
             '--input-ipc-server='+self.pipe_name, '--force-window=yes',
             '--geometry=1000x680+50+50', '--pause=yes', '--ao=null',
@@ -237,11 +238,17 @@ try:
              all(player.get('user-data/splay')['connection'] == 'connected' for player in (a, b)))
     a.open_popup()
     a.capture('real-popup-connected')
-    a.click_row('chat')
-    wait_for('popup chat action closes popup and opens actual chat input',
+    wait_for('connected chat button is available', lambda: a.geometry().get('chat_available'))
+    if args.uosc:
+        # uosc does not expose button hitboxes; invoke its configured command.
+        a.cmd('script-message-to', 'splay', 'splay-action', 'chat')
+    else:
+        button = a.geometry()['chat_button']
+        a.click((button['x1']+button['x2'])/2, (button['y1']+button['y2'])/2)
+    wait_for('dedicated chat action closes popup and opens actual chat input',
              lambda: not a.geometry().get('popup_open') and a.get('user-data/mpv/console/open') is True)
     a.cmd('keypress', 'ESC')
-    wait_for('popup chat can be cancelled', lambda: a.get('user-data/mpv/console/open') is not True)
+    wait_for('button chat can be cancelled', lambda: a.get('user-data/mpv/console/open') is not True)
     wait_for('Enter opens cancellable real chat prompt', a.open_chat)
     for character in 'cancelled draft':
         a.cmd('keypress', 'SPACE' if character == ' ' else character)

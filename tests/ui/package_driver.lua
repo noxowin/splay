@@ -9,6 +9,10 @@ mp.add_timeout(1.5, function()
     assert(type(overlay)=='table' and overlay.enabled==false and overlay.status_shown==false,
         'packaged overlay must initialize with the feature disabled and status hidden')
     print('PACKAGE_OVERLAY_LOADED true')
+    local playlist=mp.get_property_native('user-data/splay-playlist')
+    assert(type(playlist)=='table' and playlist.follow==false and playlist.count==0,
+        'packaged playlist must initialize without following or replacing media')
+    print('PACKAGE_PLAYLIST_LOADED true')
     print('PACKAGE_NATIVE_OPEN true')
     print('PACKAGE_SMOKE_COMPLETED')
     mp.commandv('quit')

@@ -52,12 +52,12 @@ int main(){
  assert(sent.size()==2&&sent[0]["Set"]["file"].is_object()&&sent[0]["Set"]["file"].empty());
  s.tick(120);assert(!s.logged());s.configure("localhost",8999,"me","room","");s.tick(200);assert(s.status()["connection"]=="connecting");
  s.connected(false,200);s.tick(213);assert(s.status()["connection"]=="error");
- s.receive("[]",214);assert(!s.logged());s.receive(std::string(17000,'x'),214);assert(!s.logged());
+ s.receive("[]",214);assert(!s.logged());s.receive(std::string(131073,'x'),214);assert(!s.logged());
  assert(password_md5("password")=="5f4dcc3b5aa765d61d8327deb882cf99");
  // Chat is the upstream wire protocol: outgoing string, incoming username/message.
  Session chat;std::vector<Json> messages,events;
  chat.send=[&](const Json& j){messages.push_back(j);};
- chat.event=[&](const Json& j){events.push_back(j);};
+ chat.event=[&](const Json& j){if(j["type"]=="chat"||j["type"]=="playback")events.push_back(j);};
  chat.configure("localhost",8999,"me","room","");chat.connected(false,300);
  assert(messages.back()["Hello"]["features"]["chat"]==true);
  assert(messages.back()["Hello"]["features"]["maxChatMessageLength"]==150);
@@ -98,7 +98,7 @@ int main(){
  chat.receive(R"({"Hello":{"username":"me","room":{"name":"room"}}})",320);
  assert(chat.status()["chat_supported"]==false);
  Session managed;std::vector<Json> managed_events;
- managed.event=[&](const Json& e){managed_events.push_back(e);};
+ managed.event=[&](const Json& e){if(e["type"]=="playback")managed_events.push_back(e);};
  managed.configure("localhost",8999,"me","+ctl:ABCDEFGHIJKL","");managed.connected(false,400);
  managed.receive(R"({"Hello":{"username":"me","room":{"name":"+ctl:ABCDEFGHIJKL"}}})",400);
  managed.receive(R"({"List":{"+ctl:ABCDEFGHIJKL":{"operator":{"controller":true},"ordinary":{"controller":false}}}})",400);
@@ -108,5 +108,129 @@ int main(){
  assert(managed_events.empty());
  managed.receive(R"({"State":{"playstate":{"position":20,"paused":false,"setBy":"operator"}}})",403);
  assert(managed_events.size()==1&&managed_events.back()["username"]=="operator");
+ // Explicit user unpause sets readiness once, independently of room control.
+ Session automatic;std::vector<Json> auto_messages;
+ automatic.send=[&](const Json& j){auto_messages.push_back(j);};
+ automatic.configure("localhost",8999,"me","+ctl:ABCDEFGHIJKL","");automatic.connected(false,500);
+ automatic.receive(R"({"Hello":{"username":"me","room":{"name":"+ctl:ABCDEFGHIJKL"},"version":"1.7.6","features":{"readiness":true}}})",500);
+ auto readiness_count=[&](){size_t count=0;for(const auto& j:auto_messages)if(j.contains("Set")&&j["Set"].contains("ready"))++count;return count;};
+ Playback auto_play;auto_play.loaded=true;auto_play.paused=true;automatic.playback(auto_play);auto_messages.clear();
+ automatic.local_change(false,501);assert(auto_messages.empty()); // Pause never makes a user unready.
+ auto_play.paused=false;automatic.playback(auto_play);automatic.local_change(true,502);assert(auto_messages.empty());
+ auto_play.buffering=true;automatic.playback(auto_play);automatic.local_change(false,502);assert(auto_messages.empty());
+ auto_play.buffering=false;auto_play.loaded=false;automatic.playback(auto_play);automatic.local_change(false,502);assert(auto_messages.empty());
+ auto_play.loaded=true;auto_play.paused=true;automatic.playback(auto_play);
+ automatic.receive(R"({"State":{"playstate":{"position":2,"paused":false,"setBy":"operator"}}})",503);
+ assert(readiness_count()==0&&automatic.status()["ready"]==false); // A remote unpause only replies with State.
+ auto_messages.clear();automatic.local_change(false,504);automatic.local_change(false,504);
+ assert(readiness_count()==1&&auto_messages.size()==1&&auto_messages[0]["Set"]["ready"]["manuallyInitiated"]==true);
+ assert(automatic.status()["ready"]==false); // Wait for the authoritative ready echo.
+ automatic.receive(R"({"Set":{"ready":{"username":"me","isReady":true,"manuallyInitiated":true}}})",504);
+ assert(automatic.status()["ready"]==true);auto_messages.clear();
+ automatic.local_change(false,505);assert(auto_messages.empty());
+ auto_play.paused=true;automatic.playback(auto_play);automatic.local_change(false,505);
+ assert(auto_messages.empty()&&automatic.status()["ready"]==true);
+ automatic.disconnected();auto_play.paused=false;automatic.playback(auto_play);automatic.local_change(false,506);assert(auto_messages.empty());
+ automatic.configure("localhost",8999,"me","room","");automatic.connected(false,507);
+ automatic.receive(R"({"Hello":{"username":"me","room":{"name":"room"},"version":"1.7.6","features":{"readiness":false}}})",507);
+ auto_messages.clear();automatic.local_change(false,507);assert(readiness_count()==0);
+
+ // Lists establish a silent membership baseline; authoritative changes emit
+ // one structured, localizable notice and preserve safe public filenames.
+ Session notices;std::vector<Json> notices_events;
+ notices.event=[&](const Json& j){notices_events.push_back(j);};
+ notices.configure("localhost",8999,"me","room","");notices.connected(false,600);
+ notices.receive(R"({"Hello":{"username":"me","room":{"name":"room"},"version":"1.7.6"}})",600);
+ assert(notices_events.size()==2&&notices_events[0]["connection"]=="connecting"&&notices_events[1]["connection"]=="connected");
+ notices_events.clear();
+ notices.receive(R"({"List":{"room":{"peer":{"file":{"name":"C:\\Users\\private\\Film.mkv","duration":123,"size":12345678901},"isReady":false},"me":{"file":{},"isReady":false}}}})",600);
+ assert(notices_events.empty());
+ auto peer_file=notices.status()["members"][1]["file"];
+ assert(peer_file["name"]=="Film.mkv"&&peer_file["duration"]==123&&peer_file["size"]==12345678901LL);
+ notices.receive(R"({"Set":{"user":{"peer":{"room":{"name":"room"},"event":{"joined":true}}}}})",601);
+ assert(notices_events.empty()); // A join already present in List is not repeated.
+ notices.receive(R"({"Set":{"user":{"new":{"room":{"name":"room"},"event":{"joined":true}}}}})",601);
+ notices.receive(R"({"Set":{"user":{"new":{"room":{"name":"room"},"event":{"joined":true}}}}})",601);
+ assert(notices_events.size()==1&&notices_events.back()["action"]=="joined");
+ notices.receive(R"({"Set":{"user":{"peer":{"file":{"name":"https://user:secret@example.invalid/private/公開.mkv?token=secret#fragment","duration":124,"size":12}}}}})",602);
+ assert(notices_events.size()==2&&notices_events.back()["action"]=="file"&&notices_events.back()["file"]["name"]==u8"公開.mkv");
+ assert(notices.status().dump().find("secret")==std::string::npos);
+ notices.receive(R"({"Set":{"ready":{"username":"peer","isReady":true,"manuallyInitiated":true}}})",602);
+ notices.receive(R"({"Set":{"ready":{"username":"peer","isReady":true,"manuallyInitiated":true}}})",602);
+ assert(notices_events.size()==3&&notices_events.back()["type"]=="ready"&&notices_events.back()["ready"]==true);
+ notices.receive(R"({"Set":{"user":{"peer":{"room":{"name":"elsewhere"}}}}})",603);
+ assert(notices_events.size()==4&&notices_events.back()["action"]=="room"&&notices_events.back()["previous_room"]=="room");
+ notices.receive(R"({"Set":{"user":{"peer":{"event":{"left":true}}}}})",603);
+ notices.receive(R"({"Set":{"user":{"peer":{"event":{"left":true}}}}})",603);
+ assert(notices_events.size()==5&&notices_events.back()["action"]=="left");
+
+ // Shared playlists use upstream Set payloads, are server-authoritative,
+ // survive early handshake updates, and cannot load player media in core.
+ Session lists;std::vector<Json> list_messages,list_events;size_t playlist_corrections=0;
+ lists.send=[&](const Json& j){list_messages.push_back(j);};
+ lists.event=[&](const Json& j){if(j["type"]=="playlist")list_events.push_back(j);};
+ lists.apply=[&](const Correction&){++playlist_corrections;};
+ lists.configure("localhost",8999,"me","room","");lists.connected(false,700);
+ assert(list_messages.back()["Hello"]["features"]["sharedPlaylists"]==true&&list_messages.back()["Hello"]["features"]["featureList"]==true);
+ lists.receive(R"({"Set":{"playlistChange":{"files":["one.mkv","two.mkv"],"user":null}}})",700);
+ lists.receive(R"({"Set":{"playlistIndex":{"index":1,"user":null}}})",700);
+ assert(lists.status()["playlist"]["files"].empty());
+ lists.receive(R"({"Hello":{"username":"me","room":{"name":"room"},"version":"1.2.255","realversion":"1.7.6","features":{"chat":true}}})",700);
+ assert(lists.status()["playlist_supported"]==true&&lists.status()["playlist"]["index"]==1&&lists.status()["playlist"]["user"]=="");
+ assert(list_events.size()==2&&playlist_corrections==0);
+ lists.command({{"action","playlist-set"},{"files",Json::array({u8"第一集.mkv","second.mkv"})}});
+ assert(list_messages.back()["Set"]["playlistChange"]["files"][0]==u8"第一集.mkv"&&lists.status()["playlist"]["files"][0]=="one.mkv");
+ lists.receive(R"({"Set":{"playlistChange":{"files":["第一集.mkv","second.mkv"],"user":"peer"}}})",701);
+ assert(lists.status()["playlist"]["files"][0]==u8"第一集.mkv"&&lists.status()["playlist"]["user"]=="peer");
+ lists.command({{"action","playlist-index"},{"index",0}});
+ assert(list_messages.back()["Set"]["playlistIndex"]["index"]==0&&lists.status()["playlist"]["index"]==1);
+ lists.receive(R"({"Set":{"playlistIndex":{"index":0,"user":"me"}}})",702);
+ auto valid_playlist=lists.status()["playlist"];auto event_count=list_events.size();
+ lists.receive(R"({"Set":{"playlistIndex":{"index":0,"user":"me"}}})",702);assert(list_events.size()==event_count);
+ for(const auto& malformed:std::vector<Json>{nullptr,true,-1,2,0.5,"0",Json::object()}){
+     const auto update=Json{{"Set",{{"playlistIndex",{{"index",malformed},{"user","peer"}}}}}};
+     lists.receive(update.dump(),703);
+     if(malformed.is_null()){valid_playlist["index"]=nullptr;valid_playlist["user"]="peer";continue;}
+     assert(lists.logged()&&lists.status()["playlist"]==valid_playlist&&!lists.status()["error"].get<std::string>().empty());
+ }
+ for(const auto& malformed:std::vector<Json>{nullptr,"files",Json::array({2}),Json::array({""}),Json::array({"bad\nfile"}),Json::array({std::string(10001,'x')})}){
+     lists.receive(Json{{"Set",{{"playlistChange",{{"files",malformed},{"user","peer"}}}}}}.dump(),704);
+     assert(lists.logged()&&lists.status()["playlist"]==valid_playlist);
+ }
+ for(const auto& invalid:std::vector<Json>{Json{{"action","playlist-index"},{"index",-1}},Json{{"action","playlist-index"},{"index",2}},Json{{"action","playlist-index"},{"index",nullptr}},Json{{"action","playlist-set"},{"files",Json::array({12})}}}){
+     rejected=false;try{lists.command(invalid);}catch(const std::exception&){rejected=true;}assert(rejected&&lists.logged());
+ }
+ Json maximum=Json::array();for(int i=0;i<250;++i){std::string name;for(int n=0;n<40;++n)name+=u8"😀";maximum.push_back(name);}
+ auto maximum_update=Json{{"Set",{{"playlistChange",{{"files",maximum},{"user","peer"}}}}}}.dump(-1,' ',true);
+ assert(maximum_update.size()>120000&&maximum_update.size()<131072);
+ lists.receive(maximum_update,705);assert(lists.logged()&&lists.status()["playlist"]["files"]==maximum);
+ rejected=false;try{lists.command({{"action","playlist-set"},{"files",maximum}});}catch(const std::exception&){rejected=true;}assert(rejected&&lists.logged());
+ Json ascii_maximum=Json::array();for(int i=0;i<250;++i)ascii_maximum.push_back(std::string(40,'x'));
+ lists.command({{"action","playlist-set"},{"files",ascii_maximum}});assert(list_messages.back()["Set"]["playlistChange"]["files"]==ascii_maximum);
+ // Account for actual escaped server usernames rather than assuming the
+ // official server's normal short-name truncation or a fixed byte reserve.
+ const auto near_wire_limit=Json::array({std::string(6000,'"')+std::string(4000,'x')});
+ lists.command({{"action","playlist-set"},{"files",near_wire_limit}});
+ assert(list_messages.back()["Set"]["playlistChange"]["files"]==near_wire_limit);
+ Session long_username;long_username.configure("localhost",8999,"me","room","");long_username.connected(false,705);
+ std::string assigned_name;for(int i=0;i<128;++i)assigned_name+=u8"ü";
+ long_username.receive(Json{{"Hello",{{"username",assigned_name},{"room",{{"name","room"}}},{"version","1.7.6"}}}}.dump(),705);
+ rejected=false;try{long_username.command({{"action","playlist-set"},{"files",near_wire_limit}});}catch(const std::exception&){rejected=true;}
+ assert(rejected&&long_username.logged());
+ maximum.push_back("overflow");rejected=false;try{lists.command({{"action","playlist-set"},{"files",maximum}});}catch(const std::exception&){rejected=true;}assert(rejected);
+ lists.receive(R"({"Set":{"playlistChange":{"files":[],"user":"peer"}}})",706);
+ assert(lists.status()["playlist"]["files"].empty()&&lists.status()["playlist"]["index"].is_null()&&playlist_corrections==0);
+ lists.command({{"action","room"},{"room","+ctl:ABCDEFGHIJKL"}});
+ assert(lists.status()["playlist"]["user"]==""&&lists.status()["playlist"]["files"].empty());
+ rejected=false;try{lists.command({{"action","playlist-set"},{"files",Json::array({"forbidden"})}});}catch(const std::exception&){rejected=true;}assert(rejected);
+ lists.receive(R"({"Set":{"controllerAuth":{"user":"me","room":"+ctl:ABCDEFGHIJKL","success":true}}})",707);
+ lists.command({{"action","playlist-set"},{"files",Json::array({"allowed"})}});assert(list_messages.back()["Set"]["playlistChange"]["files"][0]=="allowed");
+ lists.disconnected();assert(lists.status()["playlist_supported"]==false&&lists.status()["playlist"]["files"].empty());
+ rejected=false;try{lists.command({{"action","playlist-set"},{"files",Json::array()}});}catch(const std::exception&){rejected=true;}assert(rejected);
+ lists.configure("localhost",8999,"me","room","");lists.connected(false,708);
+ lists.receive(R"({"Hello":{"username":"me","room":{"name":"room"},"version":"1.7.6","features":{"sharedPlaylists":false}}})",708);
+ assert(lists.status()["playlist_supported"]==false);
+ rejected=false;try{lists.command({{"action","playlist-set"},{"files",Json::array()}});}catch(const std::exception&){rejected=true;}assert(rejected&&lists.logged());
+ lists.receive(R"({"Set":{"playlistChange":{"files":["disabled"],"user":"peer"}}})",708);assert(lists.logged()&&lists.status()["playlist"]["files"].empty());
  std::cout<<"session tests passed\n";
 }

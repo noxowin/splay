@@ -7,7 +7,7 @@ import argparse
 root = Path(__file__).resolve().parents[2]
 parser=argparse.ArgumentParser()
 parser.add_argument('--mpv',type=Path,default=root/'.local/mpv/runtime/mpv.exe')
-parser.add_argument('--archive',type=Path,default=root/'dist/splay-windows-x64-preview3.zip')
+parser.add_argument('--archive',type=Path,default=root/'dist/splay-windows-x64-preview4.zip')
 opts=parser.parse_args()
 archive = opts.archive
 config = root / '.local/package-smoke'
@@ -29,11 +29,13 @@ assert 'Lua error' not in text and 'stack traceback' not in text, text
 assert 'PACKAGE_SMOKE_COMPLETED' in text, text
 assert 'PACKAGE_NATIVE_OPEN true' in text, text
 assert 'PACKAGE_OVERLAY_LOADED true' in text, text
+assert 'PACKAGE_PLAYLIST_LOADED true' in text, text
 assert '[splay_core] Destroying client handle' in text, text
 assert '[splay] Destroying client handle' in text, text
 assert '[splay_overlay] Destroying client handle' in text, text
+assert '[splay_playlist] Destroying client handle' in text, text
 assert 'args="splay-state"' in text, text
 assert "Can't find script 'splay_core'" not in text, text
 assert "Can't find script 'splay'" not in text, text
-print('Package coexistence: three real packaged runtime files auto-loaded, core status received, overlay initialized, native panel opened, clean exit')
+print('Package coexistence: four real packaged runtime files auto-loaded, core status received, overlay and playlist initialized, native panel opened, clean exit')
 print(config / 'smoke.log')
