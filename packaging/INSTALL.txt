@@ -2,8 +2,8 @@ splay Windows x64 development preview
 
 Project code: GNU GPL version 3 only (GPL-3.0-only), see LICENSE.
 Third-party code retains its licenses, see THIRD_PARTY_NOTICES.md and licenses/.
-Matching source and build instructions for v0.1.0-preview.2:
-https://github.com/noxowin/splay/tree/v0.1.0-preview.2
+Matching source and build instructions for v0.1.0-preview.3:
+https://github.com/noxowin/splay/tree/v0.1.0-preview.3
 
 Requires an existing mpv installation with C plugin support and mp.input (tested
 host: official mpv v0.41.0 release MinGW asset, reporting 0.41.0-dev-g41f6a6450).
@@ -14,17 +14,20 @@ Manual installation (close mpv first):
    portable installations use portable_config alongside mpv.exe).
 2. Copy scripts\splay.lua, scripts\splay_core.dll and scripts\splay_overlay.lua
    to its scripts folder. Back up existing splay files before replacing them.
-   Upgrading the first preview replaces two files and adds splay_overlay.lua.
+   Upgrading replaces all three runtime files.
 3. Optionally copy selected settings from script-opts\splay.conf.example to
    script-opts\splay.conf. Do not store passwords. The example is not auto-installed.
 4. Start mpv normally, preserving your usual media and arguments. Press
    Shift+s for the native panel, or move the mouse near the bottom and click
-   the Sync button. The binding is non-forced and can be
+   the small Sync icon. The first menu item enables/disables splay.
+   The Shift+s binding is non-forced and can be
    overridden in your input.conf. Alternative: script-message-to splay splay-open.
 
 First-run defaults: syncplay.pl:8999 and nickname splayuser.
-Disconnected is the default. Enter host, port, nickname, room, server password
-and TLS policy, then select Connect. Reconnect is manual; disconnect leaves
+splay starts DISABLED in every new player process: no connection, status overlay,
+or Enter shortcut takeover. Enable it, then enter host, port, nickname, room,
+server password and TLS policy and select Connect. There is no default room;
+enter or explicitly select one before connecting. Reconnect is manual; disabling leaves
 local playback running. Password prompts are visible to people looking at the
 screen. mp.input keeps text in process memory, uses unique password prompt IDs,
 and is never given a persistent history path. Submitted text may remain in
@@ -35,13 +38,21 @@ splay. Treat debug/trace IPC logs outside splay as sensitive.
 Connection history is stored in splay-history.json inside the active mpv config
 directory. It remembers non-secret fields and multiple profiles. Selecting a
 profile fills the form and clears the in-memory password; it does not connect.
+Draft settings can retain an empty room; complete profiles require a room.
+Legacy Default room history is not automatically filled, but remains selectable.
+Remove room=default from an old splay.conf if you want an empty first-run room.
 History overrides first-run defaults from splay.conf. Set history_enabled=no
 to disable reading/saving history. Passwords and chats are not saved to disk.
 
-The top-left overlay shows readiness, playback actions and chat. The bottom
-mouse buttons open the panel, toggle readiness and open chat input. The menu
-can hide status/buttons temporarily; status_osd=no and button_enabled=no are
-persistent configuration options. Adjust button_bottom for custom toolbars.
+Only while enabled, the top-left overlay shows connection/readiness, room,
+playback actions and chat. The small icon opens a compact menu; connection,
+members and settings have separate pages. The menu can hide status/buttons;
+status_osd=no and button_enabled=no are persistent configuration options.
+The standalone fallback uses button_bottom=48 and button_right=22 (scaled).
+Remove an old button_bottom=85 override to use the new default position.
+When enabled, connected, chat supported and media loaded, Enter opens chat;
+Enter sends and Esc cancels. Other menus/input keep their own keys. Disabling
+restores the original Enter action (for example fullscreen).
 Chat history is limited to 100 messages in the current room/connection and is
 cleared when changing rooms or disconnecting. Server chat limits are respected.
 
@@ -53,9 +64,10 @@ Create controlled room: enter room name and a Syncplay operator password of form
 AB-123-456. Keep that password yourself; splay does not persist it.
 
 Optional uosc (tested 5.12/5.13): script-message-to splay splay-open uosc opens the menu.
-splay registers a uosc button named splay but never modifies uosc controls.
-Add button:splay to your own uosc controls only if you want a toolbar entry.
-The standalone bottom mouse buttons need no uosc controls changes.
+splay extends a known uosc controls layout in memory for this process, retaining
+other buttons and options. It never writes uosc.conf. Existing button:splay is
+not duplicated. With no readable controls declaration, a standalone icon is used;
+you may alternatively place button:splay in your own controls layout.
 Native panel works without uosc. Set ui=uosc only when uosc is installed.
 
 Automation via mpv IPC: script-message-to splay splay-command <JSON>, where JSON
@@ -72,8 +84,8 @@ production use. Tested behavior and limitations are listed there. No automatic
 connection, media loading, configuration overwrite, or playlist sharing occurs.
 
 Chinese installation instructions are included at docs/install.md.
-The included docs/validation-v2.md records current tested behavior and limits;
-docs/validation.md is the first-preview archive. Upstream update impact is
+The included docs/validation-v3.md records current tested behavior and limits;
+validation-v2.md and validation.md are earlier archives. Upstream update impact is
 explained in docs/upstream-compatibility.md.
-The adjacent splay-windows-x64-preview2.zip.sha256 file contains the archive
+The adjacent splay-windows-x64-preview3.zip.sha256 file contains the archive
 SHA-256 checksum; it is distributed alongside, not inside, the ZIP.

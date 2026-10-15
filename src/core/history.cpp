@@ -42,7 +42,7 @@ struct Lock {
     }
     ~Lock(){if(file.value!=INVALID_HANDLE_VALUE)UnlockFileEx(file.value,0,1,0,&overlap);}
 };
-Json settings(const Json& source) {
+Json settings(const Json& source,bool allow_empty_room=false) {
     if(!source.is_object())throw std::runtime_error("History settings must be an object");
     Json result=Json::object();
     for(const auto key:fields) {
@@ -54,7 +54,7 @@ Json settings(const Json& source) {
         } else {
             if(!value.is_string())throw std::runtime_error(std::string("Invalid history field: ")+key);
             const auto text=value.get<std::string>();
-            if(text.empty()||text.size()>1024||std::any_of(text.begin(),text.end(),[](unsigned char c){return c<32||c==127;}))
+            if((text.empty()&&!(allow_empty_room&&std::string(key)=="room"))||text.size()>1024||std::any_of(text.begin(),text.end(),[](unsigned char c){return c<32||c==127;}))
                 throw std::runtime_error(std::string("Invalid history field: ")+key);
             if(std::string(key)=="tls"&&text!="prefer"&&text!="require"&&text!="off")throw std::runtime_error("Invalid history TLS policy");
         }
@@ -66,7 +66,10 @@ void append(Json& list,const Json& value) {
     if(std::find(list.begin(),list.end(),value)==list.end())list.push_back(value);
 }
 void remember_values(Json& value,const Json& profile) {
-    for(const auto key:fields)append(value["values"][key],profile[key]);
+    for(const auto key:fields) {
+        if(std::string(key)=="room"&&profile[key]=="")continue;
+        append(value["values"][key],profile[key]);
+    }
 }
 Json read(const std::wstring& path) {
     const auto attributes=GetFileAttributesW(path.c_str());
@@ -82,7 +85,7 @@ Json read(const std::wstring& path) {
     try {
         if(!source.is_object()||source.at("schema")!=1||!source.at("profiles").is_array()||!source.at("last").is_object())throw std::runtime_error("schema");
         Json result=empty();
-        if(!source["last"].empty())result["last"]=settings(source["last"]);
+        if(!source["last"].empty())result["last"]=settings(source["last"],true);
         for(const auto& item:source["profiles"])append(result["profiles"],settings(item));
         if(source.contains("values")) {
             if(!source["values"].is_object())throw std::runtime_error("values");
@@ -132,13 +135,15 @@ Json History::handle(const Json& command) {
         const auto action=command.at("action").get<std::string>();
         if(action=="history-load")path_=command.at("path").get<std::string>();
         else if(action!="history-save")throw std::runtime_error("Unknown history command");
+        const auto remember=action=="history-save"&&command.value("remember_profile",false);
+        Json draft;
+        if(action=="history-save")draft=settings(command.at("settings"),!remember);
         const auto path=wide(path_);
         Lock lock(path);
         result=read(path);
         if(action=="history-save") {
             auto next=result;
-            next["last"]=settings(command.at("settings"));
-            const auto remember=command.value("remember_profile",false);
+            next["last"]=std::move(draft);
             if(remember)append(next["profiles"],next["last"]);
             remember_values(next,next["last"]);
             write(path,next);

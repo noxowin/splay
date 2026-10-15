@@ -1,5 +1,5 @@
 # Copy selected non-secret settings to script-opts/splay.conf if desired.
-# splay never writes this file and never connects automatically.
+# splay never writes this file and starts disabled in every new mpv process.
 # These are first-run defaults. Saved non-secret history restores the last form.
 # History is separate: ~~/splay-history.json.
 # Set history_enabled=no to use these defaults on every launch and disable saves.
@@ -7,7 +7,8 @@ history_enabled=yes
 host=syncplay.pl
 port=8999
 username=splayuser
-room=default
+# No automatic room: enter or explicitly select a room before connecting.
+room=
 tls=prefer
 # native uses mp.input; uosc requires separately installed uosc (tested 5.12/5.13).
 ui=native
@@ -15,7 +16,9 @@ ui=native
 # Overlay visibility/position (also toggle visibility in the splay menu).
 status_osd=yes
 button_enabled=yes
-button_bottom=85
+# Standalone fallback only; integrated uosc controls use their own layout.
+button_bottom=48
+button_right=22
 overlay_font_size=22
 overlay_chat_ttl=12
 overlay_chat_lines=4

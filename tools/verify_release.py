@@ -66,6 +66,7 @@ def package_inputs(root, recorded, require_license=False):
         'docs/install.md': root / 'docs/install.md',
         'docs/validation.md': root / 'docs/validation.md',
         'docs/validation-v2.md': root / 'docs/validation-v2.md',
+        'docs/validation-v3.md': root / 'docs/validation-v3.md',
         'docs/upstream-compatibility.md': root / 'docs/upstream-compatibility.md',
         'licenses/SOURCES.json': root / 'third_party/SOURCES.json',
         'THIRD_PARTY_NOTICES.md': root / 'THIRD_PARTY_NOTICES.md',

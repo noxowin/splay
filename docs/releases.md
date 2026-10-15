@@ -1,5 +1,13 @@
 # 发布与来源对应
 
+## v0.1.0-preview.3
+
+[发布页面](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.3) 提供 `splay-windows-x64-preview3.zip` 及同名 `.sha256` 校验文件。对应源码为 [`v0.1.0-preview.3`](https://github.com/noxowin/splay/tree/v0.1.0-preview.3)，仍为开发预发布。
+
+本版更新 Lua 界面、聊天输入与原生历史草稿保存，升级须替换三个运行文件。使用与前版相同的本机 MinGW-Builds GCC 14.2.0 工具链重新编译；DLL SHA-256 为 `024a926e4c1392d3723a1d2a5e78ba04d15fe4d02ef6d1b2509df5e20d35a062`。实际验证与限制见 [本轮记录](validation-v3.md)。
+
+ZIP 中包含 GPL-3.0-only 主许可证、第三方声明、固定来源与原始许可文件；运行不需要 Python、独立 Syncplay 客户端或 LuaSocket。用户的播放器、配置、媒体和连接历史均不在包内。
+
 ## v0.1.0-preview.2
 
 [发布页面](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.2) 提供 Windows x64 插件 ZIP 和 SHA-256 校验文件。该版本为预发布，不代表稳定版或所有 mpv 整合包均兼容。

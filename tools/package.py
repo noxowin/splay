@@ -6,7 +6,7 @@ import argparse
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--output', type=Path, default=ROOT/'dist'/'splay-windows-x64-preview2.zip',
+parser.add_argument('--output', type=Path, default=ROOT/'dist'/'splay-windows-x64-preview3.zip',
                     help='Archive path; use a separate directory to preserve earlier downloads')
 args = parser.parse_args()
 files = {
@@ -18,6 +18,7 @@ files = {
     'docs/install.md': ROOT/'docs/install.md',
     'docs/validation.md': ROOT/'docs/validation.md',
     'docs/validation-v2.md': ROOT/'docs/validation-v2.md',
+    'docs/validation-v3.md': ROOT/'docs/validation-v3.md',
     'docs/upstream-compatibility.md': ROOT/'docs/upstream-compatibility.md',
     'licenses/SOURCES.json': ROOT/'third_party/SOURCES.json',
 }
