@@ -21,10 +21,14 @@ __pycache__/
 
 # Private runtime configuration and credentials
 /.codex/
-/portable_config/
-/local-config/
-/splay-history.json*
-/splay-credentials.json*
+portable_config/
+local-config/
+splay-history.json*
+splay-credentials.json*
+mpv.conf
+input.conf
+uosc.conf
+splay.conf
 .env
 .env.*
 !.env.example

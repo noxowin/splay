@@ -1,4 +1,4 @@
-# 第四轮实际验证记录
+# v0.1.0-preview.4 验证记录
 
 记录日期：2026-10-15。对应 `v0.1.0-preview.4`，Windows x64 开发预览；不代表稳定或所有整合包均兼容。
 
@@ -58,8 +58,6 @@ python tests/ui/package_smoke.py --archive dist/v0.1.0-preview.4/splay-windows-x
 ```
 
 `tests/ui/playlist_forms.lua` 使用真实 mpv Lua/JSON 和模拟 mpv 状态运行生产列表适配，可通过 `--script=tests/ui/playlist_forms.lua --script-opts=playlist_forms-source=scripts/splay_playlist.lua --no-config --idle=yes --vo=null --ao=null` 执行。
-
-开发机器的原始证据保留在忽略目录：`.local/integration/playlist-20261015-015917-15439d`、`.local/credential-ui-path/run-27258438`、`.local/playlist-ui/run-ad83b4ef`、`.local/v4-overlay`、`.local/ui-review-v4`、`.local/ui-path/run-bf7b8468`（native）、`.local/ui-path/run-a9eaf41d`（uosc）、`.local/integration/20261015-044612-db84a1`（HTTP）。这些路径是本机验收索引，不是仓库内可下载资产。
 
 ## 已知限制
 

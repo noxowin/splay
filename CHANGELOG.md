@@ -21,7 +21,7 @@
 - 首次房间留空，连接前必须填写或选择；空房间草稿仍可记住服务器、昵称等字段。
 - 不再自动恢复旧版 Default 占位房间，但保留历史以供明确选择。
 
-升级请替换全部三个运行文件。具体测试和未验证范围见 [本轮记录](docs/validation-v3.md)。
+升级请替换全部三个运行文件。具体测试和未验证范围见 [该版本记录](https://github.com/noxowin/splay/blob/v0.1.0-preview.3/docs/validation-v3.md)。
 
 ## v0.1.0-preview.2 — 2026-10-14
 
@@ -34,8 +34,8 @@
 - 保留播放/暂停/跳转、受控房操作员认证、TLS、手动重连和媒体地址保护。
 - 采用 GPL-3.0-only，提供 Windows 自动构建、产物校验、贡献和安全反馈说明。
 
-升级需替换 `splay.lua`、`splay_core.dll` 并新增 `splay_overlay.lua`。测试范围见 [验证记录](docs/validation-v2.md)；不包含共享播放列表、自动重连或全员准备后自动开播。
+升级需替换 `splay.lua`、`splay_core.dll` 并新增 `splay_overlay.lua`。测试范围见 [该版本记录](https://github.com/noxowin/splay/blob/v0.1.0-preview.2/docs/validation-v2.md)；不包含共享播放列表、自动重连或全员准备后自动开播。
 
 ## 首轮私有预览 — 2026-10-13
 
-建立可选的原生 mpv 插件、Lua 面板及 uosc 菜单，实现 Syncplay 连接、成员、准备状态、受控房间、播放同步与 TLS。完成固定版本官方客户端和服务端的本地/HTTP 联调。见 [首轮验证存档](docs/validation.md)。
+建立可选的原生 mpv 插件、Lua 面板及 uosc 菜单，实现 Syncplay 连接、成员、准备状态、受控房间、播放同步与 TLS。完成固定版本官方客户端和服务端的本地/HTTP 联调。见 [首轮验证存档](https://github.com/noxowin/splay/blob/v0.1.0-preview.4/docs/validation.md)。

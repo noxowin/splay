@@ -1,75 +1,32 @@
-splay Windows x64 development preview 4
+splay - Windows x64 development preview
 
-Project: GPL-3.0-only. See LICENSE and THIRD_PARTY_NOTICES.md.
-Matching source: https://github.com/noxowin/splay/tree/v0.1.0-preview.4
-Chinese instructions: docs/install.md. Tested scope: docs/validation-v4.md.
+Full instructions: docs/install.md. Preview 4 test record: docs/validation-v4.md.
+Source and downloads: https://github.com/noxowin/splay
+Use the source tag corresponding to the downloaded Release; CI builds are previews.
 
-Install into your existing mpv configuration (close the player first):
-Copy ALL FOUR runtime files into its scripts folder:
+INSTALL / UPGRADE
+Close mpv. Copy all four files into its active configuration's scripts folder:
   scripts/splay.lua
   scripts/splay_core.dll
   scripts/splay_overlay.lua
   scripts/splay_playlist.lua
-Back up old splay files before replacing them. Keep mpv.conf, input.conf,
-uosc.conf and other scripts. No player, Python or Syncplay client is bundled.
-Requires Windows x64 mpv with C plugins and mp.input; uosc is optional.
+Replace only splay files; keep existing player settings and other scripts.
+Requires Windows x64 mpv with C plugins and mp.input. uosc is optional.
 
+USE
 Open media normally. Shift+s or the bottom Sync icon opens the menu.
-Each new player starts with splay DISABLED. Enable, choose a room, then connect.
+Each new player starts with splay disabled. Enable it, choose a room, then connect.
 Defaults: syncplay.pl:8999, nickname splayuser, no default room.
-Existing input.conf wins over ordinary shortcut bindings. Explicit binding:
-  SHIFT+s script-message-to splay splay-open
+Connected: Enter opens/sends chat, Esc cancels, Shift+h opens session messages.
+Server passwords are remembered with Windows current-user encryption; settings
+allow deletion or disabling. Password input is visible. Do not share private
+configuration, splay-history.json, splay-credentials.json or debug logs.
+Shared playlists do not transmit media. Local following is off by default.
 
-Non-secret form/history is kept in splay-history.json in the active config folder.
-Server passwords are remembered separately in splay-credentials.json, encrypted
-with Windows current-user DPAPI and keyed by host/port. Password settings let you
-delete saved credentials or disable remembering. With remembering off, stored
-passwords are not used. Set remember_password=no for a persistent opt-out.
-history_enabled=no only disables non-secret history. Neither store auto-connects.
-Credentials are not portable across Windows accounts/machines. Operator passwords
-are not remembered. Never place passwords in splay.conf. Password prompts are
-visible on screen and may remain in mpv's in-memory console history; external
-debug/trace IPC logs can contain secrets. Do not publish private runtime files.
+UNINSTALL
+Close mpv and remove only the four splay files and any splay-only settings.
+Optional history/credential cleanup and configuration details: docs/install.md.
 
-Enter opens chat while connected and media loaded; Enter sends, Esc cancels.
-A separate chat icon appears beside Sync while connected. Disabling restores
-the original Enter action. Shift+h opens the last 300 session messages (chat,
-playback, seeks, connections, members and playlist events). History stays across
-room changes/disconnects, but is not saved after process exit.
-
-Left notices expire after 5 seconds by default. Right room panel shows members,
-readiness/current file and shared playlist position. While playing it hides
-according to mouse inactivity and the existing cursor-autohide policy; when
-paused it stays visible. No cursor options are overwritten.
-User-initiated unpause marks the user ready; remote unpause does not.
-
-Shared room playlist supports add/import/reorder/remove and explicit selection.
-Joining or receiving a list never loads media. Follow is OFF by default and
-resets on room changes. Enable it explicitly to follow selection/advance at EOF.
-Only local basenames are imported; network entries require explicit sharing.
-Match known local files/current directory or bind a local file. Unknown HTTP(S)
-URLs need item-specific confirmation; remote absolute paths/other schemes are
-not automatically opened. No media is transmitted. Controlled-room permissions
-apply. Limits: 250 items/10000 Unicode characters and official 16 KiB wire line.
-
-Optional settings are in script-opts/splay.conf.example (not auto-installed).
-status_osd=no, room_panel=no or button_enabled=no hide the corresponding UI.
-Standalone offsets: button_bottom=48, button_right=22. Remove an old
-button_bottom=85 override to use these defaults. uosc controls are extended only
-in memory for this process, preserving unrelated buttons and config files.
-
-TLS prefer allows plaintext only when the server explicitly lacks TLS; require
-refuses plaintext. Certificate/handshake failures never downgrade. Reconnect is
-manual. Joining keeps current media/arguments; explicitly selecting/following
-playlist items is a separate request to load media. No automatic all-ready start.
-
-Automation: script-message-to splay splay-command <JSON>. Connect requests from
-automation explicitly choose remember_password/use_saved_password; UI defaults
-are not silently applied. Use protected local IPC and avoid logging secrets.
-
-Uninstall: close mpv, remove only the four splay runtime files and any splay-only
-settings you added. Optionally delete splay-history.json, splay-credentials.json
-and their .lock files. Never remove the whole configuration/scripts directory.
-
-The adjacent splay-windows-x64-preview4.zip.sha256 checks the ZIP; it is not inside
-the ZIP. Earlier validation files are retained as historical records.
+LICENSE / VERIFY
+GPL-3.0-only; preserve LICENSE, THIRD_PARTY_NOTICES.md and licenses/.
+Compare the ZIP's SHA256 with its adjacent .sha256 file before installation.

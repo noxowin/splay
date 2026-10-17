@@ -16,10 +16,11 @@ from interop import Job
 # Closing the parent also closes this Windows job, including on interruption.
 job = Job()
 parser = argparse.ArgumentParser()
-parser.add_argument('--mpv', type=Path, default=Path('D:/mpv/mcv/mpv.exe'))
-parser.add_argument('--uosc', type=Path, default=Path('D:/mpv/mcv/portable_config/scripts/uosc'))
-parser.add_argument('--uosc-config', type=Path, default=Path('D:/mpv/mcv/portable_config/script-opts/uosc.conf'))
-parser.add_argument('--fonts', type=Path, default=Path('D:/mpv/mcv/portable_config/fonts'))
+parser.add_argument('--mpv', type=Path, default=ROOT / '.local/mpv/runtime/mpv.exe')
+parser.add_argument('--uosc', type=Path, default=ROOT / '.local/uosc/scripts/uosc')
+parser.add_argument('--uosc-config', type=Path, default=ROOT / 'tests/ui/fixtures/uosc-layout.conf',
+                    help='Synthetic layout by default; optionally use an explicit local configuration')
+parser.add_argument('--fonts', type=Path, default=ROOT / '.local/uosc/fonts')
 parser.add_argument('--mode', choices=('native','uosc','all'), default='all')
 parser.add_argument('--output', type=Path, default=ROOT / '.local/v4-overlay')
 args = parser.parse_args()
@@ -27,7 +28,7 @@ args.output.mkdir(parents=True, exist_ok=True)
 fixture = args.output / 'fixture'
 fixture.mkdir(exist_ok=True)
 (fixture / 'script-opts').mkdir(exist_ok=True)
-shutil.copyfile(args.uosc_config if args.uosc_config.exists() else ROOT / 'tests/ui/fixtures/uosc-layout.conf', fixture / 'script-opts/uosc.conf')
+shutil.copyfile(args.uosc_config, fixture / 'script-opts/uosc.conf')
 shutil.copyfile(ROOT / 'tests/ui/overlay_host.lua', fixture / 'splay.lua')
 
 
@@ -131,7 +132,7 @@ class Player:
             r=g['buttons'][0]
             self.click((r['x1']+r['x2'])/2,(r['y1']+r['y2'])/2)
         else:
-            # Actual fixture layout: after forward/space, before danmaku. This
+            # Synthetic fixture layout: after forward/space, before fixture-action. This
             # coordinate is calibrated against the saved real-window capture.
             self.click(g['width']-(368 if g['chat_available'] else 321), g['height']-60)
         if not self.geometry()['popup_open']: self.capture('popup-click-failed')
@@ -375,7 +376,7 @@ for mode in (('native','uosc') if args.mode=='all' else (args.mode,)):
         assert opts['overlay-test-keep']=='untouched'
         if mode=='uosc':
             assert opts['uosc-controls'].split(',').count('button:splay')==1
-            assert 'button:danmaku' in opts['uosc-controls'] and 'fast_forward' in opts['uosc-controls']
+            assert 'button:fixture-action' in opts['uosc-controls'] and 'fast_forward' in opts['uosc-controls']
         foreign_controls=None
         if mode=='uosc':
             # A later plugin/user runtime override keeps ownership of its

@@ -3,100 +3,58 @@
 [![Windows build](https://github.com/noxowin/splay/actions/workflows/windows.yml/badge.svg)](https://github.com/noxowin/splay/actions/workflows/windows.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-**[下载 Windows x64 预览版](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.4)** · [安装说明](docs/install.md) · [问题反馈](https://github.com/noxowin/splay/issues) · [更新记录](CHANGELOG.md)
+为现有 mpv 添加 Syncplay 同步播放、房间、聊天与共享播放列表，无需额外运行 Syncplay 客户端。
 
-为 mpv 增加可选的 Syncplay 同步功能。在浏览器或其他软件打开视频后，直接在当前播放器中连接服务器、加入房间并选择是否同步。
+**[下载 Windows x64 预览版](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.4)** · [安装与使用](docs/install.md) · [更新记录](CHANGELOG.md) · [问题反馈](https://github.com/noxowin/splay/issues)
 
-An optional Syncplay-compatible plugin for your existing mpv player. Windows x64 first; no separate Syncplay client required at runtime.
+当前版本 **v0.1.0-preview.4**，仍处于开发预览阶段。splay 是独立项目，并非 Syncplay 或 mpv 的官方发行版。
 
-**当前版本：`v0.1.0-preview.4`，公开开发预览版，尚非稳定版。** 默认关闭，通过小图标或 Shift+s 按需启用；支持加密密码记忆、房间共享播放列表、聊天和分区状态显示。兼容范围和实际测试结果见 [验证记录](docs/validation-v4.md)。
+## 功能
 
-先以独立插件接入用户现有的 mpv 或 mpv 整合包；后续再评估包含同一插件的集成版播放器。splay 是独立项目，不是 Syncplay 或 mpv 的官方发行版。
+- 与 Syncplay 服务器及官方客户端同步播放、暂停和跳转；支持成员、准备状态与受控房间。
+- 播放器内聊天、近期消息历史；左上角显示短时消息，右上角显示房间信息，播放时随鼠标闲置隐藏。
+- 记住多组连接信息；服务器密码以 Windows 当前用户加密保存，支持删除或停用。
+- 房间共享播放列表：添加、导入本机队列、排序、选集，以及可选的本机跟随和播完下一项。
+- 每次启动默认关闭，按需启用；支持独立图标菜单与可选的 uosc 控制条入口。
 
-## 使用流程
+## 快速开始
 
-1. 用原有方式打开视频，例如浏览器调用外部 mpv。
-2. 按 **Shift+s**，或把鼠标移到底部点击同步图标，在简短菜单中启用 splay。
-3. 填写或选择历史服务器、昵称和房间，连接后查看成员和准备状态。
-4. 同步播放、暂停、跳转；受控房间由操作员控制播放。
-5. 播放时按 **Enter** 输入聊天，再按 Enter 发送，Esc 取消；关闭 splay 后继续独立播放。
+1. 下载 Release 中的 `splay-windows-x64-preview4.zip`，关闭播放器。
+2. 将包内以下四个文件放入 mpv **实际配置目录**下的 `scripts` 文件夹；升级时全部替换，不覆盖其他配置。
 
-每个新播放器进程默认关闭 splay，不自动连接、不显示同步状态、不接管聊天键。启用后仍需手动连接；媒体仍由各成员自己的播放器获取，Syncplay 仅同步播放状态，不传输视频。
+   ```text
+   scripts/splay.lua
+   scripts/splay_core.dll
+   scripts/splay_overlay.lua
+   scripts/splay_playlist.lua
+   ```
 
-## 已实现的功能
+3. 正常打开视频，按 **Shift+s** 或点击底部同步图标，启用 splay 并连接房间。默认服务器为 `syncplay.pl:8999`、昵称为 `splayuser`，房间需自行填写或选择。
+4. 连接后按 **Enter** 输入聊天，再按 Enter 发送，Esc 取消；**Shift+h** 查看本次进程的消息历史。
 
-- 兼容现有 Syncplay 服务器，并与官方客户端互通。
-- 连接、断开、切换房间，以及明确的连接状态与错误提示。
-- 成员列表、准备状态、受控房间及操作员认证；主动开始播放时自动准备。
-- 播放、暂停、跳转、进度纠偏与手动重连。
-- 记住服务器、端口、昵称、房间、TLS；支持完整连接组合和单个字段历史。
-- 按服务器地址和端口记住密码，以 Windows 当前用户加密保存，可删除或停用。
-- 与官方客户端双向聊天；左上角显示短时消息，右上角显示成员、文件和共享列表当前项，播放时随鼠标闲置隐藏。
-- Shift+h 查看本次进程最近 300 条消息，包含聊天、连接、成员、播放、跳转和列表操作。
-- 房间共享列表支持添加、导入本机队列、排序、删除和选集；可显式开启本机跟随及播完下一项。
-- 紧凑图标、小菜单与分级设置；有可用 uosc 布局时将入口加入现有控制条，无 uosc 时提供独立入口。
-- 保留已有播放器配置、当前媒体和平台传入的播放参数。
+便携版配置通常位于 `mpv.exe` 旁的 `portable_config`。完整安装、校验与快捷键冲突处理见 [使用指南](docs/install.md)。GitHub 的 Source code 压缩包不含已编译 DLL。
 
-共享列表不传输视频。加入房间不会换片，列表跟随默认关闭；本机文件需能匹配或手动绑定，陌生网络地址需逐项确认。自动重连和“全员准备后自动开播”尚未实现。
+同步不传输视频，各成员需自行获取媒体。加入房间保留当前视频和调用参数；共享列表的本机跟随默认关闭，未知网络地址需逐项确认。
 
-## 安装
+## 界面
 
-在 [Release 页面](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.4) 下载 `splay-windows-x64-preview4.zip` 和同名 `.sha256` 文件。GitHub 自动生成的 Source code 压缩包是源码，不含已编译 DLL。可用 PowerShell 的 `Get-FileHash .\splay-windows-x64-preview4.zip -Algorithm SHA256` 与校验文件比对。
+以下截图使用合成测试视频。
 
-关闭播放器，将预览包中的 **四个运行文件** `scripts/splay.lua`、`scripts/splay_core.dll`、`scripts/splay_overlay.lua`、`scripts/splay_playlist.lua` 放入该播放器实际使用的配置目录下的 `scripts` 文件夹。升级时替换前三个文件并新增播放列表模块。便携版通常使用 `mpv.exe` 旁的 `portable_config`；不要覆盖其他配置。
+![控制条入口与紧凑菜单](docs/images/compact-menu.png)
 
-正常打开视频，按 **Shift+s** 进入菜单并启用，首次默认服务器为 **syncplay.pl:8999**、昵称为 **splayuser**，房间留空，必须填写或选择后才能连接。下次打开会恢复连接表单和已保存的服务器密码，仍需手动启用和连接。密码使用 Windows 当前用户加密保存；输入时屏幕可见。
+<details>
+<summary>查看状态、聊天与共享播放列表</summary>
 
-完整步骤、uosc 按钮与卸载方式见 [安装说明](docs/install.md)。运行插件不需要安装 Python、Syncplay 客户端或 LuaSocket。
+![准备状态、播放提示与聊天](docs/images/status-chat.png)
 
-以下为实际播放器中的紧凑菜单与控制条入口，视频为自行生成的测试画面：
+![共享播放列表](docs/images/shared-playlist.png)
 
-![splay 的控制条图标与六项紧凑菜单](docs/images/compact-menu.png)
+</details>
 
-启用并连接后显示准备状态、播放提示与聊天：
+## 兼容与开发
 
-![splay 在 mpv 中显示准备状态、播放提示与双向聊天](docs/images/status-chat.png)
+需要支持 C 插件和 `mp.input` 的 Windows x64 mpv；uosc 可选。已测 mpv 0.41 开发构建、uosc 5.12/5.13 与 Syncplay 1.7.6，具体版本和限制见 [验证记录](docs/validation-v4.md)。完整整合包、真实浏览器鉴权链及最低兼容版本尚未全面验证。
 
-共享播放列表保留独立的本机匹配和跟随开关：
+构建与测试见 [贡献指南](CONTRIBUTING.md)，内部接口见 [架构说明](docs/architecture.md)。[上游兼容说明](docs/upstream-compatibility.md) 介绍官方更新对本项目的影响。
 
-![房间共享播放列表](docs/images/shared-playlist.png)
-
-## 从源码构建
-
-开发需要 Windows x64、Python 3 与 MinGW-w64 GCC（本次使用 GCC 14.2.0）。在项目目录执行：
-
-```powershell
-python tools/build.py package --compiler 'C:\path\to\g++.exe'
-```
-
-输出为 `dist/splay-windows-x64-preview4.zip`。源码内固定了 JSON 与 mpv API 头文件；构建不下载依赖。官方客户端、播放器和测试媒体仅用于开发验证，不随插件打包。
-
-GitHub Actions 在 Windows 上构建并运行核心、连接历史、加密凭据与包内容检查。CI 产物用于开发验证，公开下载以 Release 为准。完整播放器互通与界面验证仍按 [贡献指南](CONTRIBUTING.md) 单独执行。
-
-## 兼容范围
-
-“通用插件”指不依赖某一个 mpv 整合包或启动器。插件仍须被目标 mpv 实例加载，并获得必要接口。禁用脚本、使用另一配置目录、架构不匹配或内嵌 libmpv 的软件需要单独核实。
-
-网络点播首版以各自打开的、可跳转且时间轴一致的媒体为验证对象。浏览器的登录信息、临时链接和请求头不会因为加入房间而自动转移给其他成员。
-
-已测参考宿主报告 `v0.41.0-dev-g41f6a6450`，uosc 为 5.13.0；也使用整合包中的 `v0.41.0-560-g05b327c72` 和 uosc 5.12.0 在隔离配置下验证界面与历史恢复。协议互通基线为 Syncplay 1.7.6。完整整合包内其他脚本、真实浏览器调用链和最低兼容版本仍待验证。非 1x 播放暂停同步；不可跳转流只具备有限同步能力。
-
-## 项目文档
-
-- [架构与插件边界](docs/architecture.md)
-- [安装与使用](docs/install.md)
-- [本轮实际验证与限制](docs/validation-v4.md)
-- [第三轮验证存档](docs/validation-v3.md)
-- [第二轮验证存档](docs/validation-v2.md)
-- [第一轮验证存档](docs/validation.md)
-- [官方更新的影响与跟进方式](docs/upstream-compatibility.md)
-- [本轮需求与实现边界](docs/iteration-4.md)
-- [首版实施计划](docs/implementation-plan.md)
-- [开发路线与验收条件](docs/roadmap.md)
-- [参考项目与来源记录](docs/references.md)
-- [协作约定](AGENTS.md)
-- [贡献指南](CONTRIBUTING.md)
-- [安全问题反馈](SECURITY.md)
-- [发布与来源对应](docs/releases.md)
-
-项目原创代码以 **GNU GPL 第 3 版（仅此版本，`GPL-3.0-only`）** 发布，完整条款见 [LICENSE](LICENSE)。Copyright (C) 2026 noxowin and splay contributors。第三方组件继续适用各自的许可，见 [声明](THIRD_PARTY_NOTICES.md) 和 [来源清单](third_party/SOURCES.json)。
+原创代码采用 [GPL-3.0-only](LICENSE)；第三方组件保留各自许可，见 [第三方声明](THIRD_PARTY_NOTICES.md)。安全问题请按 [SECURITY.md](SECURITY.md) 反馈。
