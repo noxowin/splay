@@ -65,6 +65,21 @@ Json settings(const Json& source,bool allow_empty_room=false) {
 void append(Json& list,const Json& value) {
     if(std::find(list.begin(),list.end(),value)==list.end())list.push_back(value);
 }
+std::string display_name(const Json& value) {
+    if(!value.is_string())throw std::runtime_error("Invalid history name");
+    const auto name=value.get<std::string>();
+    if(name.empty()||name.size()>1024||std::any_of(name.begin(),name.end(),[](unsigned char c){return c<32||c==127;}))
+        throw std::runtime_error("Invalid history name");
+    return name;
+}
+bool same_settings(const Json& left,const Json& right) {
+    for(const auto key:fields)if(left.at(key)!=right.at(key))return false;
+    return true;
+}
+void remember_profile(Json& profiles,const Json& profile) {
+    for(auto& item:profiles)if(same_settings(item,profile))return;
+    profiles.push_back(profile);
+}
 void remember_values(Json& value,const Json& profile) {
     for(const auto key:fields) {
         if(std::string(key)=="room"&&profile[key]=="")continue;
@@ -86,7 +101,11 @@ Json read(const std::wstring& path) {
         if(!source.is_object()||source.at("schema")!=1||!source.at("profiles").is_array()||!source.at("last").is_object())throw std::runtime_error("schema");
         Json result=empty();
         if(!source["last"].empty())result["last"]=settings(source["last"],true);
-        for(const auto& item:source["profiles"])append(result["profiles"],settings(item));
+        for(const auto& item:source["profiles"]) {
+            auto profile=settings(item);
+            if(item.contains("name"))profile["name"]=display_name(item["name"]);
+            remember_profile(result["profiles"],profile);
+        }
         if(source.contains("values")) {
             if(!source["values"].is_object())throw std::runtime_error("values");
             for(const auto key:fields)if(source["values"].contains(key)) {
@@ -98,8 +117,12 @@ Json read(const std::wstring& path) {
                 }
             }
         }
-        for(const auto& item:result["profiles"])remember_values(result,item);
-        if(!result["last"].empty())remember_values(result,result["last"]);
+        // Explicit values (including empty lists) are authoritative. Only old
+        // schema 1 files without values need suggestions derived from settings.
+        if(!source.contains("values")) {
+            for(const auto& item:result["profiles"])remember_values(result,item);
+            if(!result["last"].empty())remember_values(result,result["last"]);
+        }
         return result;
     }catch(...) {throw std::runtime_error("History file has invalid fields; original file preserved");}
 }
@@ -133,23 +156,53 @@ Json History::handle(const Json& command) {
     Json result=empty();
     try {
         const auto action=command.at("action").get<std::string>();
-        if(action=="history-load")path_=command.at("path").get<std::string>();
-        else if(action!="history-save")throw std::runtime_error("Unknown history command");
+        if(action=="history-load") {
+            auto candidate=command.at("path").get<std::string>();
+            wide(candidate);
+            path_=std::move(candidate);
+        } else if(action!="history-save"&&action!="history-rename"&&action!="history-delete"&&
+                  action!="history-clear-values"&&action!="history-clear")throw std::runtime_error("Unknown history command");
         const auto remember=action=="history-save"&&command.value("remember_profile",false);
         Json draft;
         if(action=="history-save")draft=settings(command.at("settings"),!remember);
+        if(action=="history-rename"||action=="history-delete")draft=settings(command.at("settings"));
+        std::string name,field;
+        if(action=="history-rename")name=display_name(command.at("name"));
+        if(action=="history-clear-values") {
+            field=command.at("field").get<std::string>();
+            if(std::none_of(std::begin(fields),std::end(fields),[&](const char* key){return field==key;}))
+                throw std::runtime_error("Invalid history suggestion field");
+        }
         const auto path=wide(path_);
         Lock lock(path);
         result=read(path);
         if(action=="history-save") {
             auto next=result;
             next["last"]=std::move(draft);
-            if(remember)append(next["profiles"],next["last"]);
+            if(remember)remember_profile(next["profiles"],next["last"]);
             remember_values(next,next["last"]);
+            write(path,next);
+            result=std::move(next);
+        } else if(action!="history-load") {
+            auto next=result;
+            if(action=="history-clear")next=empty();
+            else if(action=="history-clear-values")next["values"][field]=Json::array();
+            else if(action=="history-delete") {
+                auto& profiles=next["profiles"];
+                profiles.erase(std::remove_if(profiles.begin(),profiles.end(),[&](const Json& profile){return same_settings(profile,draft);}),profiles.end());
+                if(!next["last"].empty()&&same_settings(next["last"],draft))next["last"]=Json::object();
+            } else {
+                bool found=false;
+                for(auto& profile:next["profiles"])if(same_settings(profile,draft)) {
+                    profile["name"]=name;found=true;
+                }
+                if(!found)throw std::runtime_error("History profile does not exist");
+            }
             write(path,next);
             result=std::move(next);
         }
     }catch(const std::exception& error) {result["error"]=error.what();}
+    if(command.is_object()&&command.contains("request_id"))result["request_id"]=command["request_id"];
     return result;
 }
 }

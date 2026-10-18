@@ -5,6 +5,8 @@ this harness's Windows job are closed. Requires access to the Windows user's
 DPAPI keys; run outside the restricted-account sandbox.
 """
 import argparse
+import ctypes
+from ctypes import wintypes
 import hashlib
 import json
 import msvcrt
@@ -33,6 +35,19 @@ def main():
     password_a, password_b = ('UI_DPAPI_A_' + uuid.uuid4().hex, 'UI_DPAPI_B_' + uuid.uuid4().hex)
     room = 'credential-' + uuid.uuid4().hex[:8]
     credential_file, history_file = config / 'splay-credentials.json', config / 'splay-history.json'
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    enum_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user.EnumWindows.argtypes=[enum_type,wintypes.LPARAM]
+    user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
+    user.GetClassNameW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int]
+    user.GetDlgItem.argtypes=[wintypes.HWND,ctypes.c_int]
+    user.GetDlgItem.restype=wintypes.HWND
+    user.GetWindowLongPtrW.argtypes=[wintypes.HWND,ctypes.c_int]
+    user.GetWindowLongPtrW.restype=ctypes.c_ssize_t
+    user.SendMessageW.argtypes=[wintypes.HWND,wintypes.UINT,wintypes.WPARAM,wintypes.LPARAM]
+    user.SendMessageW.restype=ctypes.c_ssize_t
+    user.PostMessageW.argtypes=[wintypes.HWND,wintypes.UINT,wintypes.WPARAM,wintypes.LPARAM]
+    user.IsWindow.argtypes=[wintypes.HWND]
 
     def launch(name, command):
         log = (output / (name + '.log')).open('wb')
@@ -59,6 +74,36 @@ def main():
                 path = ROOT / source
                 if path.is_file():
                     shutil.copy2(path, config / 'scripts' / path.name)
+            # Observe the real overlay's already-public non-secret state handoff.
+            # The production overlay still handles every message normally.
+            overlay_source=(ROOT/'scripts/splay_overlay.lua').read_text(encoding='utf-8')
+            (config/'scripts/splay_overlay.lua').write_text('''local register=mp.register_script_message
+mp.register_script_message=function(name,fn)
+    if name=='splay-state' then register(name,function(json)
+        mp.set_property_native('user-data/splay-test-state',require('mp.utils').parse_json(json));fn(json)
+    end) else register(name,fn) end
+end
+'''+overlay_source,encoding='utf-8')
+            (config/'scripts/splay.lua').write_text('''local input=require 'mp.input'
+for _,kind in ipairs({'get','select'}) do
+    local original=input[kind]
+    input[kind]=function(request)
+        local status={kind=kind,prompt=request.prompt,items=request.items,submitted=false,closed=false}
+        mp.set_property_native('user-data/splay-test-input',status)
+        local submit,closed=request.submit,request.closed
+        request.submit=function(value)
+            status.submitted=true;status.value=value
+            mp.set_property_native('user-data/splay-test-input',status)
+            if submit then submit(value) end
+        end
+        request.closed=function(...)
+            status.closed=true;mp.set_property_native('user-data/splay-test-input',status)
+            if closed then closed(...) end
+        end
+        return original(request)
+    end
+end
+'''+(ROOT/'scripts/splay.lua').read_text(encoding='utf-8'),encoding='utf-8')
             self.pipe_name = r'\\.\pipe\splay_credentials_' + uuid.uuid4().hex
             command = [args.mpv, '--load-scripts=no', '--config-dir=' + str(config), '--vo=null', '--ao=null',
                        '--pause=yes', '--idle=yes', '--input-ipc-server=' + self.pipe_name, '--msg-level=all=warn',
@@ -97,6 +142,9 @@ def main():
         def state(self):
             return self.get('user-data/splay') or {}
 
+        def full_state(self):
+            return self.get('user-data/splay-test-state') or {}
+
         def action(self, name):
             self.cmd('script-message-to', 'splay', 'splay-action', name)
 
@@ -114,13 +162,49 @@ def main():
             time.sleep(.06)
 
         def field(self, name, value):
+            if name=='password':
+                self.native('password',value)
+                return
             self.action(name)
             wait_for('production ' + name + ' form opens', lambda: self.get('user-data/mpv/console/open') is True)
             history = json.loads(history_file.read_text(encoding='utf-8')) if history_file.exists() else {}
             if name != 'password' and history.get('values', {}).get(name):
                 self.submit(1)  # The actual history selector's manual-entry row.
+                wait_for('manual non-secret field input is ready',lambda:(self.get('user-data/splay-test-input') or {}).get('kind')=='get')
             self.submit(str(value))
+            status=self.get('user-data/splay-test-input') or {}
+            assert status.get('submitted') or status.get('items'),status
             self.cmd('keypress', 'ESC')
+
+        def native_window(self):
+            found=[]
+            @enum_type
+            def visit(hwnd,_):
+                pid=wintypes.DWORD()
+                user.GetWindowThreadProcessId(hwnd,ctypes.byref(pid))
+                if pid.value==self.process.pid:
+                    kind=ctypes.create_unicode_buffer(100)
+                    user.GetClassNameW(hwnd,kind,len(kind))
+                    if kind.value=='splay.SecretInput' and user.GetDlgItem(hwnd,1001): found.append(hwnd)
+                return True
+            user.EnumWindows(visit,0)
+            return found[0] if found else None
+
+        def fill_native(self,secret=None,key='ENTER'):
+            hwnd=wait_for('isolated production Windows password dialog opens',self.native_window)
+            edit=user.GetDlgItem(hwnd,1001)
+            assert user.GetWindowLongPtrW(edit,-16)&0x20,'Native password must use ES_PASSWORD'
+            wait_for('native password input never opens console',lambda:self.get('user-data/mpv/console/open') is not True)
+            if secret is not None:
+                buffer=ctypes.create_unicode_buffer(secret)
+                assert user.SendMessageW(edit,0xC,0,ctypes.cast(buffer,ctypes.c_void_p).value)
+            if key=='CLOSE': user.PostMessageW(hwnd,0x10,0,0)
+            else: user.PostMessageW(edit,0x100,0x1B if key=='ESC' else 0x0D,0)
+            wait_for('production Windows password dialog closes',lambda:not user.IsWindow(hwnd))
+
+        def native(self,action,secret=None,key='ENTER'):
+            self.action(action)
+            self.fill_native(secret,key)
 
         def close(self):
             if self.process.poll() is None:
@@ -147,7 +231,11 @@ def main():
             self.file.close()
 
     def connected(player, description):
-        wait_for(description, lambda: player.state().get('connection') == 'connected')
+        try:
+            wait_for(description, lambda: player.state().get('connection') == 'connected')
+        except AssertionError:
+            state=player.full_state()
+            raise AssertionError(description+'; connection='+str(state.get('connection'))+'; error='+str(state.get('error')))
         assert player.get('path') == str(ROOT / '.local/test-media.mp4')
 
     def disconnected(player):
@@ -182,10 +270,20 @@ def main():
         second.action('connect')
         connected(second, 'fresh process connects without retyping password through init/status readiness')
         disconnected(second)
+        prior=credential_file.read_bytes()
+        second.native('password','SYNTHETIC_CANCEL_NOT_SAVED',key='ESC')
+        time.sleep(.25)
+        assert credential_file.read_bytes()==prior,'Escape must leave encrypted credential unchanged'
+        second.native('password','SYNTHETIC_CLOSE_NOT_SAVED',key='CLOSE')
+        time.sleep(.25)
+        assert credential_file.read_bytes()==prior,'Window close must leave encrypted credential unchanged'
+        second.action('connect')
+        connected(second,'Escape and window close retain the previously saved password')
+        disconnected(second)
         second.field('room', room + '-other')
         second.action('connect')
         connected(second, 'different room reuses the same server credential')
-        assert second.state()['room'] == room + '-other'
+        assert second.state()['room'] == room + '-other', (second.state()['room'],room+'-other')
         disconnected(second)
         second.field('port', port_b)
         second.action('connect')
@@ -230,20 +328,58 @@ def main():
         third.action('connect')
         wait_for('fresh process after deletion cannot automatically authenticate server A',
                  lambda: third.state().get('connection') == 'error')
+        third.action('toggle-remember-password')
+        third.field('password',password_a)
+        third.action('connect')
+        connected(third,'native temporary password authenticates without restoring deleted credential')
+        assert [entry['port'] for entry in entries()]==[port_b]
+        disconnected(third);third.action('connect')
+        connected(third,'temporary native password is reused only from the current endpoint hash')
+        third.native('authenticate',None,key='ESC')
+        assert third.state()['connection']=='connected'
+        controlled='native-'+uuid.uuid4().hex[:6]
+        third.action('create-room')
+        wait_for('controlled-room name uses non-secret console form',lambda:third.get('user-data/mpv/console/open') is True)
+        third.submit(controlled)
+        third.fill_native('bad-synthetic-operator')
+        time.sleep(.2)
+        assert third.state()['connection']=='connected','Validation failure must preserve the connection'
+        third.action('create-room')
+        wait_for('controlled-room form can reopen after validation error',lambda:third.get('user-data/mpv/console/open') is True)
+        third.submit(controlled)
+        operator_password='SY-314-159'
+        third.fill_native(operator_password)
+        wait_for('native operator password creates a controlled room',lambda:controlled in third.state().get('room','') and third.state().get('room','').startswith('+'))
+        wait_for('controlled room creation authenticates the native operator',lambda:third.full_state().get('is_controller') is True)
+        third.native('authenticate',operator_password)
+        wait_for('native operator authentication succeeds',lambda:third.full_state().get('is_controller') is True)
+        third.native('authenticate','ZZ-000-000')
+        wait_for('wrong native operator password reports server authentication error',lambda:third.full_state().get('error')=='Operator authentication failed')
+        third.native('authenticate',operator_password)
+        wait_for('native operator dialog reopens after authentication failure',lambda:not third.full_state().get('error'))
+        third.action('password')
+        active_window=wait_for('native dialog remains open for mpv shutdown test',third.native_window)
+        third.close()
+        assert not user.IsWindow(active_window),'mpv shutdown must join and destroy the native input worker'
         excluded = [secret.encode('utf-8') for secret in (password_a, password_b)]
         excluded += [hashlib.md5(secret.encode()).hexdigest().encode() for secret in (password_a, password_b)]
+        excluded += [value.encode() for value in (operator_password,'SYNTHETIC_CANCEL_NOT_SAVED','SYNTHETIC_CLOSE_NOT_SAVED','bad-synthetic-operator')]
         for path in (history_file, credential_file):
             raw = path.read_bytes()
             assert all(value not in raw for value in excluded), 'secret or protocol password hash persisted in ' + path.name
         for path in config.rglob('*'):
             if path.is_file() and 'scripts' not in path.parts:
                 assert all(value not in path.read_bytes() for value in excluded), 'secret persisted in isolated configuration data'
+        for path in output.glob('*.log'):
+            assert all(value not in path.read_bytes() for value in excluded), 'secret leaked into child process logs'
         history = json.loads(history_file.read_text(encoding='utf-8'))
         assert all(set(profile) == {'host', 'port', 'username', 'room', 'tls'} for profile in history['profiles'])
         result = dict(result='passed', server='unmodified Syncplay 1.7.6', dpapi='current Windows user',
-                      production_ui='splay.lua + real mp.input forms', fresh_processes=3,
+                      production_ui='splay.lua + Windows ES_PASSWORD dialogs; non-secret fields use mp.input', fresh_processes=3,
                       checks=['fast save/connect', 'restart', 'room reuse', 'port isolation',
                               'fast endpoint status/connect', 'stale same-endpoint reply', 'opt out', 'delete/restart',
+                              'native Escape/window-close preserves saved password','temporary password native hash reuse',
+                              'native controlled-room creation/operator authentication and failure/reopen','shutdown with native dialog open',
                               'encrypted file only; no plaintext or MD5 in history/configuration'],
                       credential_ports=[entry['port'] for entry in entries()], artifacts=str(output))
         (output / 'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')

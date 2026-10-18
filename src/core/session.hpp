@@ -3,6 +3,7 @@
 #include <functional>
 #include <cmath>
 #include <map>
+#include <deque>
 #include <optional>
 #include <string>
 namespace splay {
@@ -17,13 +18,18 @@ namespace splay {
     };
     class Session {
         public:
+        ~Session(){forget_password();}
         std::function<void(const Json&)> send;
         std::function<void(const Correction&)> apply;
         std::function<void()> changed;
         std::function<void(const Json&)> event;
-        void configure(std::string host,int port,std::string user,std::string room,std::string password);
+        void configure(std::string host,int port,std::string user,std::string room,std::string password,bool reuse_password=false);
+        void forget_password();
+        bool can_reuse_password(const std::string& host,int port) const { return host==host_&&port==port_&&!password_.empty(); }
+        void reconnect();
         void connected(bool encrypted,double now);
-        void disconnected(const std::string& error="");
+        void disconnected(const std::string& error="",bool retryable=false);
+        bool retryable() const { return retryable_; }
         void receive(const std::string& line,double now);
         void command(const Json& command);
         void playback(const Playback& value) {
@@ -42,7 +48,7 @@ namespace splay {
         private:
         std::string host_,user_,room_,password_,connection_="disconnected",error_;
         int port_=8999;
-        bool encrypted_=false,logged_=false,ready_=false,controller_=false,first_=true;
+        bool encrypted_=false,logged_=false,ready_=false,controller_=false,first_=true,retryable_=false;
         bool chatSupported_=false,playlistSupported_=false,readySupported_=true,readyRequested_=false;
         size_t chatMaxLength_=150;
         uint64_t eventId_=0;
@@ -50,6 +56,18 @@ namespace splay {
         double eventPosition_=0,eventTime_=0;
         unsigned clientIgnore_=0,serverIgnore_=0;
         double rtt_=0,lastReceive_=0,now_=0;
+        struct LatencyReport {
+            std::string session;
+            uint64_t seq=0;
+            double rtt_ms=0,received=0;
+            bool reported=false;
+        };
+        bool latencyEnabled_=false,latencyPublished_=false,rttSample_=false;
+        double rttReceived_=0,lastLatencyShare_=0;
+        uint64_t latencySeq_=0;
+        std::string latencySession_;
+        std::deque<double> sentPings_;
+        std::map<std::string,LatencyReport> latencyReports_;
         Playback local_;
         Json pending_state_;
         Json pending_playlist_=Json::object();
@@ -66,9 +84,12 @@ namespace splay {
         void playlist(const Json&,bool index);
         void clear_playlist();
         void room_changed(const std::string&);
-        void member(const std::string&,const std::string&,const Json&);
+        void member(const std::string&,const std::string&,const Json&,bool file_update=true,bool allow_latency=true);
+        Json latency(const std::string&) const;
+        void read_latency(const std::string&,const std::string&,const Json&);
+        void reset_latency();
         bool controlled() const;
-        void file();
+        void file(bool refresh_list=true);
     };
     std::string password_md5(const std::string&);
 }

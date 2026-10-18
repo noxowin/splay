@@ -36,16 +36,17 @@ struct Transport::Impl {
     size_t queued = 0, eventBytes = 0;
     std::thread worker;
     std::atomic<bool> stop{false};
+    uint64_t generation = 0;
     SOCKET sock = INVALID_SOCKET;
     CredHandle cred{}; CtxtHandle ctx{};
     bool haveCred = false, haveCtx = false, encrypted = false;
     SecPkgContext_StreamSizes sizes{};
     std::string ciphertext, plaintext;
-    void emit(TransportEvent::Kind k, std::string text = {}) {
+    void emit(TransportEvent::Kind k, std::string text = {},bool retryable=false) {
         std::lock_guard<std::mutex> lock(mutex);
         if (k != TransportEvent::Kind::Error && k != TransportEvent::Kind::Closed &&
             (eventBytes + text.size() > MaxQueue || events.size() >= 4096)) throw std::runtime_error("Incoming event queue exceeded limit");
-        eventBytes += text.size(); events.push_back({k, std::move(text), encrypted});
+        eventBytes += text.size(); events.push_back({k, std::move(text), encrypted,generation,retryable});
     }
     void check(Clock::time_point deadline) {
         if (stop) throw std::runtime_error("Cancelled");
@@ -102,7 +103,9 @@ struct Transport::Impl {
         }
         CloseHandle(ov.hEvent);
         struct Free { PADDRINFOEXW p; ~Free(){ if(p) FreeAddrInfoExW(p); } } free{addresses};
-        if (rc || stop) throw std::runtime_error("DNS lookup failed or cancelled");
+        if(stop)throw std::runtime_error("Cancelled");
+        if(rc==WSATRY_AGAIN||rc==WSAETIMEDOUT)throw std::runtime_error("Temporary DNS lookup failure");
+        if(rc)throw std::runtime_error("DNS lookup failed");
         auto until = Clock::now() + std::chrono::seconds(10);
         for (auto a = addresses; a; a = a->ai_next) {
             check(until); sock = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
@@ -180,6 +183,7 @@ struct Transport::Impl {
             SecBuffer b[4]{{static_cast<unsigned long>(ciphertext.size()),SECBUFFER_DATA,ciphertext.data()},{0,SECBUFFER_EMPTY,nullptr},{0,SECBUFFER_EMPTY,nullptr},{0,SECBUFFER_EMPTY,nullptr}};
             SecBufferDesc d{SECBUFFER_VERSION,4,b}; auto status=DecryptMessage(&ctx,&d,0,nullptr);
             if(status==SEC_E_INCOMPLETE_MESSAGE) { rawRead(ciphertext,until); if(ciphertext.size()>262144) throw std::runtime_error("TLS record exceeded limit"); continue; }
+            if(status==SEC_I_CONTEXT_EXPIRED)throw std::runtime_error("Peer closed connection");
             if(status!=SEC_E_OK) throw std::runtime_error("TLS stream closed or decryption failed");
             size_t extra=0;
             for(auto& v:b) { if(v.BufferType==SECBUFFER_DATA) plaintext.append(static_cast<char*>(v.pvBuffer),v.cbBuffer); if(v.BufferType==SECBUFFER_EXTRA) extra=v.cbBuffer; }
@@ -228,7 +232,17 @@ struct Transport::Impl {
                 if(r>0 || !ciphertext.empty()) read(std::min(partialUntil,Clock::now()+std::chrono::seconds(15)));
             }
         } catch(const std::exception& e) {
-            if(!stop) { try { emit(TransportEvent::Kind::Error,std::string(phase)+": "+e.what()); } catch(...) {} }
+            if(!stop) { try {
+                const std::string reason=e.what();
+                // Retry only a narrow allowlist of temporary network failures.
+                // TLS certificate/negotiation/protocol failures never downgrade.
+                const bool retryable=reason=="Network operation timed out"||reason=="TCP connection failed"||
+                    reason=="Temporary DNS lookup failure"||reason=="Peer closed connection"||
+                    reason=="Socket read failed"||reason=="Socket write failed"||
+                    reason=="Socket wait failed"||reason=="Socket connect wait failed"||
+                    reason=="Socket read wait failed";
+                emit(TransportEvent::Kind::Error,std::string(phase)+": "+reason,retryable);
+            } catch(...) {} }
         }
         if(haveCtx) DeleteSecurityContext(&ctx);
         if(haveCred) FreeCredentialsHandle(&cred);
@@ -239,7 +253,7 @@ struct Transport::Impl {
 };
 Transport::Transport():impl_(new Impl) { WSADATA w{}; if(WSAStartup(MAKEWORD(2,2),&w)) throw std::runtime_error("Winsock initialization failed"); }
 Transport::~Transport() { disconnect(); WSACleanup(); }
-void Transport::disconnect() { impl_->stop=true; if(impl_->worker.joinable()) impl_->worker.join(); std::lock_guard<std::mutex> lock(impl_->mutex); impl_->outgoing.clear(); impl_->events.clear(); impl_->queued=impl_->eventBytes=0; }
+void Transport::disconnect() { impl_->stop=true; if(impl_->worker.joinable()) impl_->worker.join(); std::lock_guard<std::mutex> lock(impl_->mutex); ++impl_->generation; impl_->outgoing.clear(); impl_->events.clear(); impl_->queued=impl_->eventBytes=0; }
 void Transport::connect(const ConnectOptions& o) { disconnect(); impl_->plaintext.clear(); impl_->ciphertext.clear(); impl_->encrypted=false; impl_->stop=false; impl_->worker=std::thread([this,o]{impl_->run(o);}); }
 void Transport::send_line(const std::string& s) {
     std::string line=s;
@@ -252,4 +266,5 @@ void Transport::send_line(const std::string& s) {
     impl_->queued+=line.size()+2; impl_->outgoing.push_back(line+"\r\n");
 }
 std::vector<TransportEvent> Transport::poll() { std::lock_guard<std::mutex> lock(impl_->mutex); std::vector<TransportEvent> out; out.swap(impl_->events); impl_->eventBytes=0; return out; }
+uint64_t Transport::generation() const { return impl_->generation; }
 }

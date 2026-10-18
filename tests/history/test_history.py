@@ -18,6 +18,16 @@ def call(path, settings=None, remember=True):
 def profile(index=0):
     return dict(host='server'+str(index)+'.example',port=8999+index,username='用户'+str(index),room='房间'+str(index),tls='prefer')
 
+def command(path, action, **fields):
+    payload=dict(action=action, **fields)
+    payload.setdefault('request_id', {'operation':action,'sequence':[1,2]})
+    result=subprocess.run([str(exe),str(path)], input=json.dumps(payload),text=True,encoding='utf-8',
+                          stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=8)
+    assert result.returncode==0,result.stderr
+    response=json.loads(result.stdout)
+    assert response['request_id']==payload['request_id'],response
+    return response
+
 with tempfile.TemporaryDirectory(prefix='splay-history-') as folder:
     path = Path(folder)/'中文目录'/'splay-history.json'
     path.parent.mkdir()
@@ -117,4 +127,109 @@ with tempfile.TemporaryDirectory(prefix='splay-history-') as folder:
         assert 'error' in call(path,profile(60)), 'damaged history must not be overwritten'
         assert path.read_bytes()==damaged
     assert 'error' in call(Path(folder)/'missing'/'history.json',profile())
+
+    managed=Path(folder)/'managed.json'
+    original=profile(200)
+    call(managed,original)
+    # Existing processes must re-read other players' saves and management writes.
+    stale=subprocess.Popen([str(exe),str(managed),'--stream'],stdin=subprocess.PIPE,
+                           stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
+    assert json.loads(stale.stdout.readline())['profiles']==[original]
+    try:
+        second=profile(201);call(managed,second)
+        renamed=command(managed,'history-rename',settings=dict(original,password='RENAME_SECRET'),name='我的服务器')
+        assert renamed['profiles'][0]==dict(original,name='我的服务器')
+        stale.stdin.write(json.dumps(dict(action='history-save',settings=original,remember_profile=True))+'\n')
+        stale.stdin.flush()
+        reread=json.loads(stale.stdout.readline())
+        assert reread['profiles']==[dict(original,name='我的服务器'),second]
+        deleted=command(managed,'history-delete',settings=original)
+        assert deleted['profiles']==[second] and deleted['last']=={}
+        stale.stdin.write(json.dumps(dict(action='history-save',settings=profile(202),remember_profile=True))+'\n')
+        stale.stdin.flush()
+        assert json.loads(stale.stdout.readline())['profiles']==[second,profile(202)]
+    finally:
+        stale.stdin.close();stale.wait(timeout=8)
+        assert stale.returncode==0,stale.stderr.read()
+    assert command(managed,'history-delete',settings=original)['profiles']==[second,profile(202)]
+    # Clearing suggestions survives process restart even while profiles/last retain values.
+    for field in original:
+        cleared=command(managed,'history-clear-values',field=field)
+        assert cleared['values'][field]==[]
+        assert call(managed)['values'][field]==[]
+    assert len(call(managed)['profiles'])==2
+    legacy_path=Path(folder)/'legacy.json'
+    legacy_path.write_text(json.dumps(dict(schema=1,last=original,profiles=[original])),encoding='utf-8')
+    assert call(legacy_path)['values']['host']==[original['host']]
+    command(legacy_path,'history-clear-values',field='host')
+    assert call(legacy_path)['values']['host']==[]
+    partial=dict(schema=1,last=original,profiles=[original],values={'host':[]})
+    legacy_path.write_text(json.dumps(partial),encoding='utf-8')
+    assert all(not values for values in call(legacy_path)['values'].values())
+
+    # Parallel names, deletions and unrelated saves must merge against current disk state.
+    concurrent_path=Path(folder)/'management-races.json'
+    for i in range(20):call(concurrent_path,profile(300+i))
+    def manage(index):
+        if index<10:return command(concurrent_path,'history-rename',settings=profile(300+index),name='Saved '+str(index))
+        if index<20:return command(concurrent_path,'history-delete',settings=profile(300+index))
+        return call(concurrent_path,profile(300+index))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+        responses=list(pool.map(manage,range(30)))
+    assert all('error' not in result for result in responses),responses
+    final=call(concurrent_path)
+    assert len(final['profiles'])==20
+    for i in range(10):
+        assert dict(profile(300+i),name='Saved '+str(i)) in final['profiles']
+        call(concurrent_path,profile(300+i))
+    assert all(item['host'] not in {profile(300+i)['host'] for i in range(10,20)} for item in final['profiles'])
+    assert all('name' in item for item in call(concurrent_path)['profiles'] if item['host'] in {profile(300+i)['host'] for i in range(10)})
+    # A rename racing the deletion of its own identity may fail, but cannot resurrect it.
+    same_target=profile(400);call(concurrent_path,same_target)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        rename=pool.submit(command,concurrent_path,'history-rename',settings=same_target,name='Racing name')
+        delete=pool.submit(command,concurrent_path,'history-delete',settings=same_target)
+        rename_result,delete_result=rename.result(),delete.result()
+    assert 'error' not in delete_result
+    assert not any(item['host']==same_target['host'] for item in call(concurrent_path)['profiles'])
+    if 'error' in rename_result:assert 'does not exist' in rename_result['error']
+
+    # Legacy extra fields are stripped even from a named profile, on load and later writes.
+    legacy_path.write_text(json.dumps(dict(schema=1,last={},profiles=[dict(second,name='Named',password='LEGACY_SECRET',mediaURL='private')],values={})),encoding='utf-8')
+    assert call(legacy_path)['profiles']==[dict(second,name='Named')]
+    sanitized=command(legacy_path,'history-rename',settings=second,name='Renamed')
+    assert sanitized['profiles']==[dict(second,name='Renamed')]
+    assert 'LEGACY_SECRET' not in legacy_path.read_text(encoding='utf-8')
+
+    previous=managed.read_bytes()
+    for action,fields in (
+        ('history-rename',dict(settings=second,name='')),
+        ('history-rename',dict(settings=second,name='bad\nname')),
+        ('history-rename',dict(settings=second,name=4)),
+        ('history-rename',dict(settings=second,name='x'*1025)),
+        ('history-rename',dict(settings=original,name='absent')),
+        ('history-rename',dict(settings=dict(second,room=''),name='bad')),
+        ('history-delete',dict(settings={'host':'partial'})),
+        ('history-delete',dict(settings=dict(second,port=True))),
+        ('history-clear-values',dict(field='password')),
+        ('history-clear-values',dict(field=['host'])),
+        ('history-clear-values',{}),('history-unknown',{})):
+        assert 'error' in command(managed,action,**fields),(action,fields)
+        assert managed.read_bytes()==previous
+    assert 'RENAME_SECRET' not in previous.decode('utf-8') and 'password' not in previous.decode('utf-8')
+    # The history component never touches the separately stored endpoint secrets.
+    secret_file=Path(folder)/'endpoint-credentials.json'
+    secret_file.write_bytes(b'credential-store-sentinel')
+    cleared=command(managed,'history-clear',password='CLEAR_SECRET')
+    assert cleared['last']=={} and cleared['profiles']==[] and all(not x for x in cleared['values'].values())
+    assert call(managed)['profiles']==[] and call(managed)['last']=={}
+    assert secret_file.read_bytes()==b'credential-store-sentinel'
+    assert 'CLEAR_SECRET' not in managed.read_text(encoding='utf-8')
+    for damage in (b'{broken',json.dumps(dict(schema=1,last={},profiles=[dict(second,name=12)])).encode()):
+        managed.write_bytes(damage)
+        for action,fields in (('history-clear',{}),('history-clear-values',dict(field='host')),
+                              ('history-delete',dict(settings=second)),('history-rename',dict(settings=second,name='Good'))):
+            assert 'error' in command(managed,action,**fields)
+            assert managed.read_bytes()==damage
 print('History: blank-room draft restart, strict completed profiles and stored values, legacy rooms, mixed draft/profile merges, Unicode paths, 30 concurrent profile merges, dedup, secrets whitelist, validation, corruption and failed write preservation passed')
+print('History management: named identities, stale-process re-read, parallel rename/delete/save merge, authoritative cleared suggestions, legacy migration, request IDs, strict input and secret isolation passed')

@@ -1,5 +1,6 @@
 -- Production main UI with an in-process mpv double; no network or config writes.
 local real_mp=require 'mp'
+real_mp.add_timeout(10,function() real_mp.commandv('quit',2) end)
 local utils=require 'mp.utils'
 local options=require 'mp.options'
 local opt={source=''};options.read_options(opt,'forms')
@@ -56,6 +57,15 @@ local function credential_init(saved)
     credential_reply(last('credential-init'),false)
     credential_reply(last('credential-status'),saved)
 end
+local function history_reply(value,request)
+    local reply=utils.parse_json(utils.format_json(value))
+    reply.request_id=(request or last('history-load')).request_id
+    handlers['splay-history'](utils.format_json(reply))
+end
+local function secret_reply(request,token,saved,cancelled,error)
+    handlers['splay-secret'](utils.format_json({request_id=request.request_id,purpose=request.purpose,
+        token=token,saved=saved==true,cancelled=cancelled==true,error=error}))
+end
 local function act(action) handlers['splay-action'](action) end
 local function finish(value,kind)
     local request=kind=='select' and selected or prompted
@@ -96,12 +106,12 @@ act('toggle-enabled');assert(properties['user-data/splay'].enabled and count('co
 assert(bindings['splay-message-history'].key=='Shift+h' and not bindings['splay-message-history'].forced)
 act('connect');assert(count('connect')==0,'first-run room must be blank')
 act('connection');assert(#selected.items<=7 and label('请先输入或选择'));dismiss()
-act('room');finish('');handlers['splay-history'](utils.format_json(history))
+act('room');finish('');history_reply(history)
 credential_reply(last('credential-status'),false)
 assert(last('history-save').settings.room=='' and not last('history-save').remember_profile,'blank room draft survives restore')
 act('connect');assert(count('connect')==0)
 act('profiles');finish(1,'select');credential_reply(last('credential-status'),false);act('connect')
-assert(last('connect').room=='历史房间' and last('connect').password=='')
+assert(last('connect').room=='历史房间' and last('connect').password==nil and last('connect').auto_reconnect==true)
 assert(last('history-save').settings.password==nil)
 state();assert(bindings['splay-chat-enter'] and bindings['splay-chat-enter'].forced,'eligible Enter overrides user fullscreen binding only while available')
 assert(#model().items==6 and model().items[4].value=='playlist' and model().items[5].value=='message-history')
@@ -126,11 +136,13 @@ assert(count('chat')==1,'a prompt opened in another room must not send to the ne
 state({chat_supported=false});assert(not bindings['splay-chat-enter'])
 local previous=prompted;handlers['splay-chat']();assert(prompted==previous)
 state({chat_supported=true})
-act('password');finish('SECRET');dismiss()
-assert(last('credential-save').password=='SECRET' and last('credential-save').host=='history.example')
-credential_reply(last('credential-save'),true)
+local previous_prompt=prompted
+act('password');local native_password=last('secret-input')
+assert(prompted==previous_prompt and native_password.purpose=='server' and native_password.host=='history.example')
+assert(native_password.remember_password==true and native_password.password==nil and not bindings['splay-chat-enter'])
+secret_reply(native_password,'opaque-server-1',true)
 act('password-settings');assert(label('已加密保存'));dismiss()
-act('connect');assert(last('connect').password=='' and last('connect').use_saved_password==true)
+act('connect');assert(last('connect').password==nil and last('connect').password_token=='opaque-server-1')
 act('room');finish(1,'select');finish('same-server-room');dismiss()
 act('connect');assert(last('connect').use_saved_password==true,'room edits retain endpoint credentials')
 act('username');finish(1,'select');finish('new-nickname');dismiss()
@@ -145,12 +157,12 @@ handlers['splay-credential'](utils.format_json({schema=1,host='other.example',po
 act('clear-password');assert(last('credential-delete').host=='other.example')
 credential_reply(last('credential-delete'),false)
 act('password-settings');assert(label('密码: 空'));dismiss()
-act('toggle-remember-password');act('password');finish('MEMORY_ONLY');dismiss()
-act('connect');assert(last('connect').password=='MEMORY_ONLY' and last('connect').remember_password==false)
-act('connect');assert(last('connect').password=='MEMORY_ONLY','opt-out retains typed password in memory')
-act('toggle-remember-password');assert(last('credential-save').password=='MEMORY_ONLY')
-credential_reply(last('credential-save'),true)
-act('profiles');finish(1,'select');credential_reply(last('credential-status'),true);act('connect');assert(last('connect').password=='')
+act('toggle-remember-password');act('password')
+secret_reply(last('secret-input'),'opaque-memory-only',false)
+act('connect');assert(last('connect').password_token=='opaque-memory-only' and last('connect').remember_password==false)
+act('connect');assert(last('connect').reuse_password==true and last('connect').password_token==nil,'opt-out reuses only the native endpoint-bound hash')
+act('toggle-remember-password');assert(count('credential-save')==0,'saving requires re-entry in the Windows dialog')
+act('profiles');finish(1,'select');credential_reply(last('credential-status'),true);act('connect');assert(last('connect').password==nil)
 act('room');finish(1,'select');finish('new-room');dismiss();assert(count('room')==0)
 act('join-room');assert(last('room').room=='new-room')
 handlers['splay-command'](utils.format_json({action='connect',host='external.example',port=8999,username='external',room='external-room',tls='off',password='EXTERNAL_SECRET',custom='preserved'}))
@@ -213,12 +225,12 @@ assert(utils.parse_json(commands[2][4]).local_file=='本机影片.mp4')
 commands={};handlers['splay-playlist-ready']();assert(commands[2][2]=='splay_playlist')
 -- Automatic migration blanks only the legacy placeholder; explicit profile selection retains it.
 start();local legacy=utils.parse_json(utils.format_json(history));legacy.last.room='DeFaUlT';legacy.profiles[1].room='Default'
-handlers['splay-history'](utils.format_json(legacy));act('toggle-enabled');act('connect');assert(count('connect')==0)
+history_reply(legacy);act('toggle-enabled');act('connect');assert(count('connect')==0)
 credential_init(false)
 act('profiles');finish(1,'select');credential_reply(last('credential-status'),false);act('connect');assert(last('connect').room=='Default')
 -- A late history reply preserves edited fields and restores the remaining draft fields.
 start();act('toggle-enabled');act('host');finish('typed-first.example');dismiss()
-handlers['splay-history'](utils.format_json(history))
+history_reply(history)
 assert(last('history-save').settings.host=='typed-first.example' and last('history-save').settings.room=='历史房间')
 start({history_enabled=false});assert(count('history-load')==0 and count('connect')==0 and count('credential-init')>0)
 act('toggle-enabled');act('host');finish('fresh.example');assert(count('history-save')==0)
@@ -231,26 +243,29 @@ local first_status=last('credential-status')
 handlers['splay-credential'](utils.format_json({schema=1,host='race.example',port=8999,saved=true}))
 assert(count('connect')==0,'uncorrelated legacy response cannot release a pending connect')
 credential_reply(first_status,true);assert(last('connect').use_saved_password==true)
-act('password');finish('RACE_SECRET');dismiss();local saving=last('credential-save')
+act('password');local saving=last('secret-input')
 pending_connects=count('connect');act('connect');assert(count('connect')==pending_connects)
 credential_reply(first_status,false);assert(count('connect')==pending_connects,'old same-endpoint status cannot overwrite pending save')
-credential_reply(saving,true);assert(count('connect')==pending_connects+1 and last('connect').use_saved_password==true and last('connect').password=='')
+secret_reply(saving,'opaque-race',true)
+assert(count('connect')==pending_connects+1 and last('connect').password_token=='opaque-race' and last('connect').password==nil)
 act('clear-password');local deleting=last('credential-delete');pending_connects=count('connect');act('connect')
-credential_reply(saving,true);assert(count('connect')==pending_connects,'old save cannot resurrect a deleted credential')
-credential_reply(deleting,false);assert(last('connect').password=='' and last('connect').use_saved_password==false)
-act('password');finish('FAILED_SAVE');dismiss();pending_connects=count('connect');act('connect')
-credential_reply(last('credential-save'),false,'fixture save failure');assert(count('connect')==pending_connects,'save failure must never fall back to an empty-password connection')
+secret_reply(saving,'old-token',true);assert(count('connect')==pending_connects,'old native input cannot resurrect a deleted credential')
+credential_reply(deleting,false);assert(last('connect').password==nil and last('connect').use_saved_password==false)
+act('password');pending_connects=count('connect');act('connect')
+secret_reply(last('secret-input'),nil,false,false,'fixture save failure');act('connect')
+assert(count('connect')==pending_connects,'save failure must never fall back to an empty-password connection')
 assert(notices[#notices]:find('fixture save failure',1,true))
-act('toggle-remember-password');act('connect');assert(last('connect').remember_password==false and last('connect').password=='FAILED_SAVE')
+act('toggle-remember-password');act('password');secret_reply(last('secret-input'),'retry-memory',false)
+act('connect');assert(last('connect').remember_password==false and last('connect').password_token=='retry-memory')
 start({host='race.example',port=8999,username='race',room='room',tls='off',history_enabled=false})
 credential_init(true);act('toggle-enabled');act('toggle-remember-password');act('password-settings')
-assert(label('当前不使用'));dismiss();act('connect');assert(last('connect').use_saved_password==false and last('connect').password=='')
+assert(label('当前不使用'));dismiss();act('connect');assert(last('connect').use_saved_password==false and last('connect').password==nil)
 start({host='race.example',port=8999,username='race',room='room',tls='off',history_enabled=false})
 credential_init(false);act('toggle-enabled');state()
 act('username');local replaced_prompt=prompted;act('room');local current_prompt=prompted
 assert(current_prompt~=replaced_prompt and not bindings['splay-chat-enter'])
 replaced_prompt.closed();assert(not bindings['splay-chat-enter'],'a stale close must not release the current input modal')
-act('toggle-enabled');assert(terminated==1 and not bindings['splay-message-history'],'disable must close the current input and restore the host history key')
+act('toggle-enabled');assert(terminated>=1 and not active_request and not bindings['splay-message-history'],'disable must close the current input and restore the host history key')
 start({host='rooms.example',port=8999,username='race',room='local-room',tls='off',history_enabled=false})
 credential_init(false);act('toggle-enabled')
 state({room='local-room',members={{username='inside',room='local-room',ready=true},
@@ -274,5 +289,96 @@ handlers['splay-event']('{"schema":1,"id":820,"type":"ready","username":"unknown
 act('message-history')
 assert(not label('outsider') and label('moving-out 切换房间: foreign-room') and label('moving-in 切换房间: local-room'))
 assert(label('race 离开房间: local-room') and label('not-ready 未准备') and label('unknown 准备状态未知') and not label('unknown 未准备'));dismiss()
+-- Profile management keeps a full settings identity across live reordering.
+start();credential_init(true);history_reply(history);credential_reply(last('credential-status'),true);act('toggle-enabled')
+act('settings');assert(#selected.items<=7 and label('连接历史管理') and label('自动重连'));dismiss()
+act('history-management');assert(#selected.items<=7 and label('命名 / 重命名 / 删除组合'));dismiss()
+act('manage-profiles');finish(1,'select');finish(2,'select')
+finish('家庭影院')
+local rename=last('history-rename')
+assert(rename.name=='家庭影院' and rename.settings.host=='history.example' and rename.settings.room=='历史房间' and rename.index==nil)
+local named=utils.parse_json(utils.format_json(history));named.profiles[1].name='家庭影院'
+history_reply(named,rename)
+act('profiles');assert(label('家庭影院'));dismiss()
+act('manage-profiles');local old_selection=selected
+local fresh=utils.parse_json(utils.format_json(named));fresh.profiles={{host='another.example',port=8999,username='other',room='other',tls='off'},fresh.profiles[1]}
+act('save-profile');history_reply(fresh,last('history-save'))
+assert(selected==old_selection);finish(1,'select');finish(3,'select');assert(selected.prompt:find('字段建议、当前连接和密码保留',1,true));finish(2,'select')
+local deleting=last('history-delete')
+assert(deleting.settings.host=='history.example' and deleting.settings.room=='历史房间' and deleting.index==nil,'management must use the originally selected settings identity')
+history_reply(fresh,deleting)
+act('clear-history-field');finish(4,'select');assert(label('确认清空房间建议'));finish(2,'select')
+local clearing_field=last('history-clear-values');assert(clearing_field.field=='room' and clearing_field.request_id)
+act('clear-history');assert(label('确认清空全部非密码历史'));finish(1,'select');assert(count('history-clear')==0)
+act('clear-history');finish(2,'select');local clearing_all=last('history-clear')
+assert(clearing_all.request_id>clearing_field.request_id and count('credential-delete')==0 and count('password-clear')==0)
+local empty={schema=1,last={},profiles={},values={host={},port={},username={},room={},tls={}}}
+history_reply(empty,clearing_all)
+history_reply(named,clearing_field) -- late field-only result must not resurrect combinations.
+act('history-management');assert(label('选择组合（仅填表）: 0'));dismiss()
+act('connect');assert(last('connect').room=='历史房间' and last('connect').use_saved_password==true,'clear keeps current form and credentials')
+-- Closing/reopening splay invalidates outstanding text/selection callbacks.
+act('clear-history');local stale_clear=selected
+act('toggle-enabled');act('toggle-enabled');local clears=count('history-clear')
+stale_clear.submit(2);assert(count('history-clear')==clears)
+act('username');local stale_name=prompted
+act('toggle-enabled');act('toggle-enabled');local saves=count('history-save')
+stale_name.submit('stale-edit');assert(count('history-save')==saves)
+-- Native secret results are correlated to purpose, endpoint and UI lifetime.
+state();act('password');local old_secret=last('secret-input')
+act('password');local new_secret=last('secret-input')
+assert(new_secret.request_id>old_secret.request_id and last('secret-cancel').request_id==old_secret.request_id)
+secret_reply(old_secret,'obsolete-token',true);assert(not bindings['splay-chat-enter'])
+secret_reply(new_secret,nil,false,true);assert(bindings['splay-chat-enter'])
+local get_before=prompted
+act('authenticate');assert(prompted==get_before and last('secret-input').purpose=='operator')
+secret_reply(last('secret-input'),nil,false,true)
+act('create-room');finish('new-controlled-room');assert(last('secret-input').purpose=='create_room' and last('secret-input').room=='new-controlled-room')
+secret_reply(last('secret-input'),nil,false,false,'Use operator password AA-123-456')
+assert(count('authenticate')==0 and count('create-room')==0 and count('credential-save')==0,'all interactive secret consumption stays in native code')
+act('password');old_secret=last('secret-input');act('toggle-enabled');act('toggle-enabled')
+secret_reply(old_secret,'closed-token',true);act('connect');assert(last('connect').password_token~='closed-token')
+state({connection='error',error='retry failure',reconnect={enabled=true,pending=true,attempt=2,remaining=4}})
+act('connection');assert(#selected.items<=7 and label('4 秒 · 第 2/5 次') and label('取消重连'));dismiss()
+act('toggle-auto-reconnect');assert(last('reconnect-disable'))
+act('toggle-auto-reconnect');assert(last('reconnect-enable'))
+act('disconnect');assert(last('disconnect'))
+handlers['splay-event'](utils.format_json({schema=1,id=990,type='connection',connection='error'}))
+state({connection='error',error='retry failure',reconnect={enabled=true,pending=true,attempt=2,remaining=3}})
+act('message-history');local failures=0
+for _,text in ipairs(selected.items) do if text:find('retry failure',1,true) then failures=failures+1 end end
+assert(failures==1 and not label('连接: 错误'),'countdown refresh and generic error events must not duplicate failure messages')
+dismiss()
+-- Latency display/sharing is opt-in and distinguishes local measurements from
+-- peer reports without suggesting a connection to the peer's machine.
+start();assert(count('latency')==0,'fresh disabled UI must not enable latency sharing')
+act('toggle-enabled');assert(last('latency').enabled==false)
+act('display');assert(label('延迟显示与共享: 关闭'));dismiss()
+act('toggle-latency');assert(last('latency').enabled==true)
+state({username='self',latency={enabled=true,rtt_ms=12.4,reported=true,stale=false,self_reported=false},members={
+    {username='self',room='active-room',ready=false},
+    {username='peer',room='active-room',latency={rtt_ms=84.6,reported=true,stale=false,self_reported=true}},
+    {username='official',room='active-room',latency={reported=false,stale=false,self_reported=true}},
+    {username='old',room='active-room',latency={rtt_ms=99,reported=true,stale=true,self_reported=true}},
+}})
+act('members');assert(label('本机 RTT: 12 ms') and label('上报 RTT: 85 ms') and label('上报 RTT: 未上报') and label('上报 RTT: 过期'))
+assert(label('官方客户端未上报延迟'));dismiss()
+act('toggle-enabled');assert(last('latency').enabled==false)
+act('toggle-enabled');assert(last('latency').enabled==true,'explicit UI re-enable reapplies the opt-in setting')
+act('toggle-latency');assert(last('latency').enabled==false)
+act('members');assert(not label('RTT:'));dismiss()
+for _,command in ipairs(core()) do
+    if command.action=='latency' then
+        assert(type(command.enabled)=='boolean' and command.host==nil and command.ip==nil and command.text==nil)
+    end
+end
+start({history_enabled=false});credential_init(false);act('toggle-enabled')
+act('username');local ordered=prompted;local before=count('history-save')
+ordered.submit('after-close')
+assert(prompted==ordered and count('history-save')==before and not ordered.closed_seen,'submit must queue work until closed')
+ordered.closed()
+act('connection');assert(label('after-close'));dismiss()
+act('username');assert(prompted.default_text=='after-close','closed dispatches exactly the submitted field edit')
+dismiss()
 print('UI_FORMS_PASSED default off, compact pages, endpoint editing, encrypted credential commands and stale reply isolation, playlist state handoff, bounded all-event history and deduplication, conditional Enter/history shortcuts, modal generations, cancellation, overlay replay')
 real_mp.commandv('quit')

@@ -2,12 +2,39 @@
 #include <cmath>
 #include <regex>
 #include <stdexcept>
+#include <random>
+#include <algorithm>
 #ifdef _WIN32
 #include <windows.h>
 #include <bcrypt.h>
 #endif
 namespace splay {
     namespace {
+        void wipe(std::string& value){
+#ifdef _WIN32
+            if(!value.empty())SecureZeroMemory(value.data(),value.size());
+#else
+            volatile char* data=value.empty()?nullptr:&value[0];
+            for(size_t n=0;n<value.size();++n)data[n]=0;
+#endif
+            value.clear();
+        }
+        std::string latency_session(){
+            unsigned char bytes[8];
+#ifdef _WIN32
+            if(BCryptGenRandom(nullptr,bytes,sizeof(bytes),BCRYPT_USE_SYSTEM_PREFERRED_RNG)<0)return {};
+#else
+            std::random_device random;
+            for(auto& byte:bytes)byte=static_cast<unsigned char>(random());
+#endif
+            std::string result;
+            for(auto byte:bytes){result+="0123456789abcdef"[byte>>4];result+="0123456789abcdef"[byte&15];}
+            return result;
+        }
+        struct SecretGuard {
+            std::string& value;
+            ~SecretGuard(){wipe(value);}
+        };
         std::string str(const Json& j,const char* key,size_t max=256) {
             auto i=j.find(key);
             if(i==j.end()||!i->is_string())throw std::runtime_error("Invalid text field");
@@ -175,6 +202,18 @@ namespace splay {
         rtt_=0;
         pending_state_=nullptr;
         eventBaseline_=false;
+        reset_latency();
+    }
+    void Session::reset_latency(){
+        rttSample_=false;
+        rttReceived_=0;
+        sentPings_.clear();
+        latencyReports_.clear();
+        latencyPublished_=false;
+        lastLatencyShare_=0;
+        latencySeq_=0;
+        // Generated lazily only when sharing has explicitly been enabled.
+        latencySession_.clear();
     }
     void Session::clear_playlist(){
         playlist_={{"files",Json::array()},{"index",nullptr},{"user",""}};
@@ -182,24 +221,39 @@ namespace splay {
     }
     void Session::room_changed(const std::string& room){
         const auto previous=room_;
+        const bool withdraw=latencyPublished_;
         room_=room;
         controller_=ready_=readyRequested_=false;
         clear_playlist();
         reset_sync();
+        if(withdraw&&logged_)file(false);
         if(previous!=room_)publish_event({{"type","room"},{"room",room_},{"previous_room",previous}});
     }
     bool Session::controlled() const {
         static const std::regex re("^\\+.*:[A-Za-z0-9_]{12}$");
         return std::regex_match(room_,re);
     }
-    void Session::configure(std::string h,int p,std::string u,std::string r,std::string pw){
+    void Session::forget_password(){
+        wipe(password_);
+    }
+    void Session::configure(std::string h,int p,std::string u,std::string r,std::string pw,bool reuse_password){
+        SecretGuard guard{pw};
         if(h.empty()||h.size()>253||u.empty()||u.size()>128||r.empty()||r.size()>256||pw.size()>1024||p<1||p>65535) throw std::runtime_error("Invalid connection settings");
+        if(reuse_password&&!can_reuse_password(h,p))throw std::runtime_error("Password entry expired; enter it again");
+        if(!reuse_password){
+            forget_password();
+            password_=password_md5(pw);
+        }
         host_=h;
         port_=p;
         user_=u;
         room_=r;
-        password_=password_md5(pw);
+        reconnect();
+    }
+    void Session::reconnect(){
         connection_="connecting";
+        retryable_=false;
+        encrypted_=false;
         lastReceive_=0;
         error_.clear();
         logged_=false;
@@ -247,10 +301,11 @@ namespace splay {
         }
         );
     }
-    void Session::disconnected(const std::string& error){
+    void Session::disconnected(const std::string& error,bool retryable){
         const auto previous=connection_;
         const auto previousError=error_;
         logged_=false;
+        retryable_=retryable;
         chatSupported_=false;
         playlistSupported_=false;
         readyRequested_=false;
@@ -274,7 +329,13 @@ namespace splay {
             else if(!local_.seekable)warning="Media is not seekable; position synchronization is unavailable";
         }
         Json members=Json::array();
-        for(auto& m:members_)members.push_back(m.second);
+        for(auto& m:members_){
+            auto value=m.second;
+            value["latency"]=latency(m.first);
+            members.push_back(std::move(value));
+        }
+        auto ownLatency=latency(user_);
+        ownLatency["enabled"]=latencyEnabled_;
         return {
             {"schema",1}
             ,{"connection",connection_}
@@ -292,13 +353,56 @@ namespace splay {
             ,{"playlist",playlist_}
             ,{"error",error_}
             ,{"warning",warning}
+            ,{"latency",ownLatency}
             ,{"members",members}
         };
     }
-    void Session::member(const std::string& user,const std::string& room,const Json& j){
+    Json Session::latency(const std::string& user) const {
+        Json result={{"rtt_ms",nullptr},{"reported",false},{"stale",false},{"self_reported",user!=user_}};
+        if(!latencyEnabled_||!logged_)return result;
+        if(user==user_){
+            result["reported"]=rttSample_;
+            result["stale"]=rttSample_&&now_-rttReceived_>=30;
+            if(rttSample_&&!result["stale"].get<bool>())result["rtt_ms"]=rtt_*1000;
+        }
+        else{
+            auto member=members_.find(user);
+            auto report=latencyReports_.find(user);
+            if(member==members_.end()||member->second.value("room",std::string())!=room_||report==latencyReports_.end())return result;
+            const auto& value=report->second;
+            result["reported"]=value.reported;
+            result["stale"]=value.reported&&now_-value.received>=30;
+            if(value.reported&&!result["stale"].get<bool>())result["rtt_ms"]=value.rtt_ms;
+        }
+        return result;
+    }
+    void Session::read_latency(const std::string& user,const std::string& room,const Json& file){
+        if(!latencyEnabled_||user==user_)return;
+        if(room!=room_){latencyReports_.erase(user);return;}
+        auto invalidate=[&](){auto i=latencyReports_.find(user);if(i!=latencyReports_.end())i->second.reported=false;};
+        if(!file.is_object()||!file.contains("splayLatency")){invalidate();return;}
+        const auto& value=file["splayLatency"];
+        if(!value.is_object()||!value.contains("v")||!value["v"].is_number_integer()||value["v"]!=1||
+           !value.contains("seq")||!value["seq"].is_number_integer()||
+           !value.contains("rtt_ms")||!value["rtt_ms"].is_number()||
+           !value.contains("session")||!value["session"].is_string()){invalidate();return;}
+        const double measured=value["rtt_ms"].get<double>();
+        const double sequence=value["seq"].get<double>();
+        const auto session=value["session"].get<std::string>();
+        if(!std::isfinite(measured)||measured<0||measured>10000||sequence<1||sequence>2147483647||
+           session.size()<8||session.size()>32||session.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=session.npos){invalidate();return;}
+        auto& report=latencyReports_[user];
+        const auto id=static_cast<uint64_t>(sequence);
+        // Repeated List snapshots and old packets never extend freshness.
+        if(report.session==session&&id<=report.seq)return;
+        report={session,id,measured,now_,true};
+    }
+    void Session::member(const std::string& user,const std::string& room,const Json& j,bool file_update,bool allow_latency){
         if(user.size()>256||room.size()>256||user.find_first_not_of(' ')==std::string::npos)return;
         Json ready=nullptr;
         if(j.contains("isReady")&&j["isReady"].is_boolean())ready=j["isReady"];
+        if(file_update&&allow_latency)read_latency(user,room,j.value("file",Json::object()));
+        if(room!=room_)latencyReports_.erase(user);
         members_[user]={
             {"username",user}
             ,{"room",room}
@@ -315,22 +419,27 @@ namespace splay {
         first_=true;
         if(logged_)file();
     }
-    void Session::file(){
+    void Session::file(bool refresh_list){
+        Json value=local_.loaded?Json{{"name","**Hidden filename**"},{"duration",local_.duration},{"size",0}}:Json::object();
+        latencyPublished_=false;
+        if(local_.loaded&&latencyEnabled_&&rttSample_&&now_-rttReceived_<30){
+            if(latencySession_.empty())latencySession_=latency_session();
+            if(!latencySession_.empty()){
+                value["splayLatency"]={{"v",1},{"rtt_ms",rtt_*1000},{"seq",++latencySeq_},{"session",latencySession_}};
+                latencyPublished_=true;
+                lastLatencyShare_=now_;
+            }
+        }
         emit({
             {
                 "Set",{
                     {
-                        "file", local_.loaded?Json{
-                            {"name","**Hidden filename**"}
-                            ,{"duration",local_.duration}
-                            ,{"size",0}
-                        }
-                        :Json::object()}
+                        "file",value}
                 }
             }
         }
         );
-        emit({
+        if(refresh_list)emit({
             {"List",nullptr}
         }
         );
@@ -380,6 +489,7 @@ namespace splay {
             Json old=known?members_[item.key()]:Json::object();
             if(v.contains("event")&&v["event"].is_object()&&v["event"].contains("left")){
                 members_.erase(item.key());
+                latencyReports_.erase(item.key());
                 if(known)publish_event({{"type","user"},{"action","left"},{"username",item.key()},{"room",old.value("room",room_)}});
                 continue;
             }
@@ -387,8 +497,9 @@ namespace splay {
             if(v.contains("room")&&v["room"].is_object())r=str(v["room"],"name");
             if(!v.contains("isReady")&&old.contains("ready"))v["isReady"]=old["ready"];
             if(!v.contains("controller")&&old.contains("is_controller"))v["controller"]=old["is_controller"];
+            const bool file_update=v.contains("file");
             if(!v.contains("file")&&old.contains("file"))v["file"]=old["file"];
-            member(item.key(),r,v);
+            member(item.key(),r,v,file_update,known||(v.contains("event")&&v["event"].is_object()&&flag(v["event"],"joined")));
             auto current=members_.find(item.key());
             if(current==members_.end())continue;
             if(!known&&v.contains("event")&&v["event"].is_object()&&flag(v["event"],"joined")){
@@ -433,6 +544,7 @@ namespace splay {
             auto& v=j["newControlledRoom"];
             auto room=str(v,"roomName");
             auto pw=str(v,"password",128);
+            SecretGuard guard{pw};
             room_changed(room);
             emit({
                 {
@@ -535,6 +647,7 @@ namespace splay {
                 members_.clear();
                 controller_=false;
                 for(auto& r:j["List"].items())if(r.value().is_object())for(auto& u:r.value().items())if(u.value().is_object())member(u.key(),r.key(),u.value());
+                for(auto i=latencyReports_.begin();i!=latencyReports_.end();)if(!members_.count(i->first))i=latencyReports_.erase(i);else ++i;
             }
             if(logged_&&j.contains("State")&&j["State"].is_object())state(j["State"],now);
             notify();
@@ -544,6 +657,8 @@ namespace splay {
         }
     }
     void Session::reply(const Json& ping,bool change,bool seek){
+        sentPings_.push_back(now_);
+        while(sentPings_.size()>32)sentPings_.pop_front();
         Json s={
             {
                 "ping",{
@@ -579,9 +694,19 @@ namespace splay {
             else if(seq(i,"client")==clientIgnore_)clientIgnore_=0;
         }
         auto ping=s.value("ping",Json::object());
-        if(ping.is_object()&&ping.contains("clientLatencyCalculation")){
-            double sample=now-number(ping,"clientLatencyCalculation",now);
-            if(sample>=0&&sample<10)rtt_=rtt_?rtt_*.85+sample*.15:sample;
+        if(ping.is_object()&&ping.contains("clientLatencyCalculation")&&ping["clientLatencyCalculation"].is_number()){
+            const double echoed=ping["clientLatencyCalculation"].get<double>();
+            // Upstream adds the time it held our ping to the echoed timestamp.
+            // Match a real outstanding send interval, rather than requiring
+            // byte equality or accepting any arbitrary server-supplied number.
+            const auto pending=std::find_if(sentPings_.rbegin(),sentPings_.rend(),[&](double sent){return echoed>=sent&&now-sent<=12.5;});
+            const double sample=now-echoed;
+            if(std::isfinite(echoed)&&pending!=sentPings_.rend()&&sample>=0&&sample<=10){
+                rtt_=rttSample_?rtt_*.85+sample*.15:sample;
+                rttSample_=true;
+                rttReceived_=now;
+                sentPings_.erase(sentPings_.begin(),pending.base());
+            }
         }
         if(!clientIgnore_&&s.contains("playstate")&&s["playstate"].is_object()){
             auto& p=s["playstate"];
@@ -639,10 +764,29 @@ namespace splay {
         if(logged_&&local_.loaded&&!local_.buffering&&std::abs(local_.speed-1)<.001&&(!controlled()||controller_))reply(Json::object(),true,seek);
     }
     void Session::tick(double now){
-        if((logged_||connection_=="connecting")&&lastReceive_>0&&now-lastReceive_>12.5)disconnected("Server timed out");
+        const auto previous=latency(user_);
+        bool expired=false;
+        for(const auto& value:latencyReports_)if(value.second.reported&&now_-value.second.received<30&&now-value.second.received>=30)expired=true;
+        now_=now;
+        if((logged_||connection_=="connecting")&&lastReceive_>0&&now-lastReceive_>12.5)disconnected("Server timed out",true);
+        if(logged_&&latencyEnabled_&&local_.loaded&&rttSample_&&
+           ((!latencyPublished_&&now_-rttReceived_<30)||(latencyPublished_&&now_-lastLatencyShare_>=10)))file(false);
+        if(expired||previous!=latency(user_))notify();
     }
     void Session::command(const Json& c){
         auto a=str(c,"action");
+        if(a=="latency"){
+            if(!c.contains("enabled")||!c["enabled"].is_boolean())throw std::runtime_error("Invalid latency preference");
+            const bool enabled=c["enabled"].get<bool>();
+            if(enabled!=latencyEnabled_){
+                const bool withdraw=latencyPublished_;
+                latencyEnabled_=enabled;
+                latencyReports_.clear();
+                if(logged_&&(enabled||withdraw))file();
+            }
+            notify();
+            return;
+        }
         if(a=="chat"){
             if(!logged_)throw std::runtime_error("Connect to a room before sending chat");
             if(!chatSupported_)throw std::runtime_error("Chat is disabled or unsupported by this server");
@@ -706,6 +850,7 @@ namespace splay {
         }
         else if(a=="authenticate"||a=="create-room"){
             auto pw=str(c,"password",128);
+            SecretGuard guard{pw};
             auto r=a=="create-room"?str(c,"room"):room_;
             if(a=="create-room"){
                 size_t characters=0;

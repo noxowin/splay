@@ -6,7 +6,7 @@ import sys
 from build import ROOT, default_compiler
 
 parser = argparse.ArgumentParser()
-parser.add_argument('suite', choices=['core', 'history', 'credentials', 'net', 'ui', 'ui-review', 'ui-history', 'tls-rejection'])
+parser.add_argument('suite', choices=['core', 'reconnect', 'latency', 'history', 'credentials', 'net', 'ui', 'ui-review', 'ui-history', 'tls-rejection'])
 parser.add_argument('--compiler', default=default_compiler())
 args = parser.parse_args()
 
@@ -27,11 +27,12 @@ elif args.suite == 'history':
          '-DWIN32_LEAN_AND_MEAN', '-DNOMINMAX', '-I'+str(ROOT/'src'), '-I'+str(ROOT/'third_party'),
          ROOT/'tests/history/driver.cpp', ROOT/'src/core/history.cpp', '-o', output])
     run([sys.executable,ROOT/'tests/history/test_history.py',output])
-elif args.suite in ('core', 'net', 'tls-rejection'):
-    target = 'core' if args.suite == 'core' else 'net'
-    output = ROOT / '.local' / ('session_test.exe' if target == 'core' else 'transport-test.exe')
+elif args.suite in ('core', 'reconnect', 'latency', 'net', 'tls-rejection'):
+    target = 'core' if args.suite in ('core', 'reconnect', 'latency') else 'net'
+    case = {'core':'session_test.cpp','reconnect':'reconnect_test.cpp','latency':'latency_test.cpp'}.get(args.suite)
+    output = ROOT / '.local' / (Path(case).stem+'.exe' if case else 'transport-test.exe')
     output.parent.mkdir(exist_ok=True)
-    sources = ([ROOT/'tests/core/session_test.cpp', ROOT/'src/core/session.cpp'] if target == 'core'
+    sources = ([ROOT/'tests/core'/case, ROOT/'src/core/session.cpp'] if target == 'core'
                else [ROOT/'tests/net/driver.cpp', ROOT/'src/net/transport.cpp'])
     libraries = ['-lbcrypt'] if target == 'core' else ['-lws2_32', '-lsecur32', '-lcrypt32', '-lbcrypt']
     run([args.compiler, '-std=c++17', '-O2', '-Wall', '-Wextra', '-static', '-pthread',

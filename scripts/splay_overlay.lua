@@ -209,13 +209,26 @@ redraw = function()
             local playlist=type(state.playlist)=='table' and state.playlist or nil
             local reserve=playlist and type(playlist.files)=='table' and #playlist.files>0 and psize*2.8 or 0
             local shown=0
+            local latency_enabled=type(state.latency)=='table' and state.latency.enabled==true
             for _,member in ipairs(members) do
-                if py+psize*4.2+reserve>max_y then break end
+                if py+psize*(latency_enabled and 5.6 or 4.2)+reserve>max_y then break end
                 local tint=member.ready==true and '80E692' or member.ready==false and '7777FF' or '999999'
                 member_line((member.ready==true and '● ' or member.ready==false and '● ' or '○ ')..plain(member.username,40),tint,'member',member.username)
                 local file=type(member.file)=='table' and member.file.name or nil
                 if member.username==state.username and type(state.local_file)=='string' and state.local_file~='' then file=state.local_file end
                 member_line('  '..(type(file)=='string' and file~='' and file or '尚未载入文件'),'BBBBBB','file',member.username)
+                if latency_enabled then
+                    local own=member.username==state.username
+                    local latency=own and state.latency or member.latency
+                    latency=type(latency)=='table' and latency or {}
+                    local measured=type(latency.rtt_ms)=='number' and latency.rtt_ms or nil
+                    if measured and (measured~=measured or measured<0 or measured>10000) then measured=nil end
+                    local text
+                    if latency.stale==true then text='已过期'
+                    elseif measured then text=string.format('%.0f ms',measured)
+                    else text=own and '测量中' or '未上报' end
+                    member_line('  延迟 · '..text..(own and '' or '（自报）'),'AAAAAA','latency',member.username)
+                end
                 shown=shown+1
             end
             if shown<#members then member_line('… 另有 '..(#members-shown)..' 位成员','999999','more') end
@@ -472,7 +485,7 @@ update_buttons=function()
         end
     end
     if popup_open then
-        local count=math.min(6,#(menu_model.items or {}))
+        local count=math.min(7,#(menu_model.items or {}))
         local row_height=34*scale
         local pw=math.min(292*scale,width-16)
         local ph=(count*34+38)*scale

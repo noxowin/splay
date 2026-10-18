@@ -213,6 +213,18 @@ for mode in (('native','uosc') if args.mode=='all' else (args.mode,)):
         time.sleep(.2)
         assert not player.geometry()['popup_open']
         player.state()
+        # Seven-row connection/settings models must expose their last action.
+        player.open_popup()
+        player.cmd('script-message-to','splay_overlay','splay-menu-model',json.dumps({
+            'title':'七项设置测试','enabled':True,
+            'items':[{'title':'设置项 '+str(index),'value':'seven-row-'+str(index)} for index in range(1,8)]},ensure_ascii=False))
+        time.sleep(.2)
+        assert len(player.geometry()['rows'])==7 and player.geometry()['rows'][-1]['value']=='seven-row-7',player.geometry()
+        player.capture('popup-seven-rows')
+        player.click_row(6)
+        assert player.action()['value']=='seven-row-7','The seventh row must remain clickable'
+        player.close_menu()
+        player.state()
         g=player.geometry()
         assert g['room_panel_visible'] and g['chat_available'], g
         rows=g['room_rows']

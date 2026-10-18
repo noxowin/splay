@@ -23,7 +23,7 @@ def build(compiler):
                '-DWIN32_LEAN_AND_MEAN', '-DNOMINMAX',
                '-I'+str(ROOT/'src'), '-I'+str(ROOT/'third_party'),
                *map(str, sources), '-o', str(output),
-               '-lws2_32', '-lsecur32', '-lcrypt32', '-lbcrypt']
+               '-lws2_32', '-lsecur32', '-lcrypt32', '-lbcrypt', '-luser32', '-lgdi32']
     subprocess.run(command, cwd=ROOT, check=True)
     print(output)
     return output

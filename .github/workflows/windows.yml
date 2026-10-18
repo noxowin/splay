@@ -77,6 +77,12 @@ jobs:
       - name: Test synchronization core
         run: python tools/check.py core --compiler "$env:CXX"
 
+      - name: Test reconnect policy and session recovery
+        run: python tools/check.py reconnect --compiler "$env:CXX"
+
+      - name: Test opt-in latency reporting
+        run: python tools/check.py latency --compiler "$env:CXX"
+
       - name: Test connection history
         run: python tools/check.py history --compiler "$env:CXX"
 

@@ -5,21 +5,22 @@
 
 为现有 mpv 添加 Syncplay 同步播放、房间、聊天与共享播放列表，无需额外运行 Syncplay 客户端。
 
-**[下载 Windows x64 预览版](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.4)** · [安装与使用](docs/install.md) · [更新记录](CHANGELOG.md) · [问题反馈](https://github.com/noxowin/splay/issues)
+**[下载 Windows x64 预览版](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.5)** · [安装与使用](docs/install.md) · [更新记录](CHANGELOG.md) · [问题反馈](https://github.com/noxowin/splay/issues)
 
-当前版本 **v0.1.0-preview.4**，仍处于开发预览阶段。splay 是独立项目，并非 Syncplay 或 mpv 的官方发行版。
+当前版本 **v0.1.0-preview.5**，仍处于开发预览阶段。splay 是独立项目，并非 Syncplay 或 mpv 的官方发行版。
 
 ## 功能
 
 - 与 Syncplay 服务器及官方客户端同步播放、暂停和跳转；支持成员、准备状态与受控房间。
 - 播放器内聊天、近期消息历史；左上角显示短时消息，右上角显示房间信息，播放时随鼠标闲置隐藏。
-- 记住多组连接信息；服务器密码以 Windows 当前用户加密保存，支持删除或停用。
+- 多组连接信息支持命名、删除和历史清理；密码用 Windows 遮罩输入框填写，并可加密保存。
 - 房间共享播放列表：添加、导入本机队列、排序、选集，以及可选的本机跟随和播完下一项。
 - 每次启动默认关闭，按需启用；支持独立图标菜单与可选的 uosc 控制条入口。
+- 临时断线自动重连，可随时取消；可选显示自己和其他 splay 成员上报的服务器往返延迟。
 
 ## 快速开始
 
-1. 下载 Release 中的 `splay-windows-x64-preview4.zip`，关闭播放器。
+1. 下载 Release 中的 `splay-windows-x64-preview5.zip`，关闭播放器。
 2. 将包内以下四个文件放入 mpv **实际配置目录**下的 `scripts` 文件夹；升级时全部替换，不覆盖其他配置。
 
    ```text
@@ -53,7 +54,7 @@
 
 ## 兼容与开发
 
-需要支持 C 插件和 `mp.input` 的 Windows x64 mpv；uosc 可选。已测 mpv 0.41 开发构建、uosc 5.12/5.13 与 Syncplay 1.7.6，具体版本和限制见 [验证记录](docs/validation-v4.md)。完整整合包、真实浏览器鉴权链及最低兼容版本尚未全面验证。
+需要支持 C 插件和 `mp.input` 的 Windows x64 mpv；uosc 可选。已测 mpv 0.41 开发构建、uosc 5.12/5.13 与 Syncplay 1.7.6，具体版本和限制见 [验证记录](docs/validation-v5.md)。完整整合包、真实浏览器鉴权链及最低兼容版本尚未全面验证。
 
 构建与测试见 [贡献指南](CONTRIBUTING.md)，内部接口见 [架构说明](docs/architecture.md)。[上游兼容说明](docs/upstream-compatibility.md) 介绍官方更新对本项目的影响。
 

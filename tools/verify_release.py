@@ -65,7 +65,7 @@ def package_inputs(root, recorded, require_license=False):
         'script-opts/splay.conf.example': root / 'script-opts/splay.conf.example',
         'INSTALL.txt': root / 'packaging/INSTALL.txt',
         'docs/install.md': root / 'docs/install.md',
-        'docs/validation-v4.md': root / 'docs/validation-v4.md',
+        'docs/validation-v5.md': root / 'docs/validation-v5.md',
         'docs/upstream-compatibility.md': root / 'docs/upstream-compatibility.md',
         'licenses/SOURCES.json': root / 'third_party/SOURCES.json',
         'THIRD_PARTY_NOTICES.md': root / 'THIRD_PARTY_NOTICES.md',

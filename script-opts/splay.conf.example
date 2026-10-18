@@ -7,6 +7,10 @@ history_enabled=yes
 # Windows current-user DPAPI; separate encrypted file: ~~/splay-credentials.json.
 # No passwords belong in this configuration. Disable to use process memory only.
 remember_password=yes
+# Retry temporary failures only after an explicit connection; never auto-connect on startup.
+auto_reconnect=yes
+# Opt-in display and sharing of server RTT; peers also need to enable reporting.
+latency_enabled=no
 host=syncplay.pl
 port=8999
 username=splayuser

@@ -1,6 +1,6 @@
 splay - Windows x64 development preview
 
-Full instructions: docs/install.md. Preview 4 test record: docs/validation-v4.md.
+Full instructions: docs/install.md. Preview 5 test record: docs/validation-v5.md.
 Source and downloads: https://github.com/noxowin/splay
 Use the source tag corresponding to the downloaded Release; CI builds are previews.
 
@@ -19,9 +19,13 @@ Each new player starts with splay disabled. Enable it, choose a room, then conne
 Defaults: syncplay.pl:8999, nickname splayuser, no default room.
 Connected: Enter opens/sends chat, Esc cancels, Shift+h opens session messages.
 Server passwords are remembered with Windows current-user encryption; settings
-allow deletion or disabling. Password input is visible. Do not share private
-configuration, splay-history.json, splay-credentials.json or debug logs.
+allow deletion or disabling. Password dialogs are masked and bypass mpv console.
+Do not share private configuration, splay-history.json, splay-credentials.json
+or debug logs.
 Shared playlists do not transmit media. Local following is off by default.
+Temporary disconnections retry up to five times after an explicit connection;
+disconnect/disable cancels retries. Optional latency display/sharing is off by
+default; peers must also report their own server RTT. See docs/install.md.
 
 UNINSTALL
 Close mpv and remove only the four splay files and any splay-only settings.
