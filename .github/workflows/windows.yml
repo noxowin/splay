@@ -83,6 +83,9 @@ jobs:
       - name: Test opt-in latency reporting
         run: python tools/check.py latency --compiler "$env:CXX"
 
+      - name: Test opt-in all-ready countdown
+        run: python tools/check.py autostart --compiler "$env:CXX"
+
       - name: Test connection history
         run: python tools/check.py history --compiler "$env:CXX"
 

@@ -73,9 +73,16 @@ local destination = DESTINATION
 local controls = CONTROLS
 local state = {}
 local events = {}
+local errors = {}
 local sequence = -1
 mp.register_script_message('splay-state', function(s)
     state = utils.parse_json(s) or {}
+    -- Preserve transient error notifications between 100 ms snapshots. A
+    -- subsequent valid playlist update can legitimately clear current error.
+    if state.error and state.error ~= '' then
+        errors[#errors + 1] = state.error
+        if #errors > 100 then table.remove(errors, 1) end
+    end
 end)
 mp.register_script_message('splay-event', function(s)
     -- Keep raw JSON so mpv's NUL-terminated node strings cannot truncate text
@@ -94,7 +101,7 @@ mp.add_periodic_timer(0.1, function()
     end
     local result = {position=mp.get_property_native('time-pos'),
         paused=mp.get_property_native('pause'), path=mp.get_property('path'),
-        duration=mp.get_property_native('duration'), state=state, event_json=events}
+        duration=mp.get_property_native('duration'), state=state, event_json=events, errors=errors}
     local out = io.open(destination .. '.tmp', 'w')
     if out then
         out:write(utils.format_json(result)); out:close()
@@ -381,7 +388,8 @@ def main():
                  lambda: state().get('connection') == 'connected' and state().get('chat_supported') is False)
         plugin.splay('chat', text='must be rejected locally')
         wait_for('disabled chat returns explicit error and keeps synchronization connected',
-                 lambda: state().get('connection') == 'connected' and 'Chat is disabled' in state().get('error', ''))
+                 lambda: state().get('connection') == 'connected' and
+                 any('Chat is disabled' in error for error in plugin.read().get('errors', [])))
         result = {'result': 'passed', 'mpv': str(args.mpv), 'upstream': str(args.upstream), 'artifacts': str(directory)}
         (directory / 'result.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
     except Exception as exc:

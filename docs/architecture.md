@@ -30,6 +30,8 @@ splay 在现有 mpv 进程中运行：C++17 原生插件处理协议和播放同
 | `playlist-set` | `files` 为完整列表，遵守服务器能力与长度限制 |
 | `playlist-index` | `index` 为从 0 开始的索引，遵守房间控制权限 |
 | `latency` | `enabled` 为布尔值，控制可选的 RTT 显示与元数据共享 |
+| `autostart` | `enabled` 为布尔值；可选 `delay` 为 3–30 秒整数（界面固定 5 秒），本次连接的全员准备倒计时策略 |
+| `autostart-cancel` | 取消当前倒计时；下一准备阶段或明确重新开启后才可再次计时 |
 
 原生核心以 `splay-state` 返回版本化状态，包含连接、房间、成员、准备和列表信息；事件通过 `splay-event` 通知界面。`splay_core` 的直接入口供内部桥接与测试使用。自动化应使用受保护的本机 IPC，避免记录包含密码的命令。
 
@@ -42,7 +44,11 @@ splay 在现有 mpv 进程中运行：C++17 原生插件处理协议和播放同
 - TLS 使用 Windows Schannel。`prefer` 仅在服务器明确不支持 TLS 时允许明文；握手或证书失败不降级，`require` 拒绝明文。
 - 仅管理 splay 自身文件；uosc 控制条只在当前进程扩展，不修改磁盘配置。协议文本作为数据处理。
 
-当前互通基线为未修改的 Syncplay 1.7.6；真实测试与未覆盖范围见 [验证记录](validation-v5.md)。官方更新的跟进方式见 [上游兼容说明](upstream-compatibility.md)。
+自动开播核心要求完整成员快照、至少两名同房成员、明确准备与媒体、本机可同步播放，以及受控房间的本连接认证。到期复核后使用现有播放状态协议；换房与重连关闭，不增加网络选主协议。状态的 `autostart` 包含 `enabled`、`delay`、`pending`、`remaining`、`reason`、`participants`。
+
+Lua 的成员 `media` 是本地显示派生数据，提供时长、名称来源与保守比较结果；不作为协议数据发回服务器，不参与自动开播资格判断。
+
+当前互通基线为未修改的 Syncplay 1.7.6；真实测试与未覆盖范围见 [验证记录](validation-v6.md)。官方更新的跟进方式见 [上游兼容说明](upstream-compatibility.md)。
 
 ## 参考与来源
 

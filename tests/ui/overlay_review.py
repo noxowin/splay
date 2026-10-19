@@ -24,6 +24,7 @@ parser.add_argument('--fonts', type=Path, default=ROOT / '.local/uosc/fonts')
 parser.add_argument('--mode', choices=('native','uosc','all'), default='all')
 parser.add_argument('--output', type=Path, default=ROOT / '.local/v4-overlay')
 args = parser.parse_args()
+results = []
 args.output.mkdir(parents=True, exist_ok=True)
 fixture = args.output / 'fixture'
 fixture.mkdir(exist_ok=True)
@@ -100,6 +101,14 @@ class Player:
 
     def geometry(self): return self.get('user-data/splay-overlay', {})
 
+    def wait_geometry(self, description, predicate, timeout=3):
+        deadline=time.monotonic()+timeout
+        while True:
+            snapshot=self.geometry()
+            if predicate(snapshot): return snapshot
+            assert time.monotonic()<deadline, (description,snapshot)
+            time.sleep(.05)
+
     def move(self, x, y):
         self.cmd('mouse', int(x), int(y))
         self.cmd('keypress', 'MOUSE_MOVE')
@@ -133,8 +142,8 @@ class Player:
             self.click((r['x1']+r['x2'])/2,(r['y1']+r['y2'])/2)
         else:
             # Synthetic fixture layout: after forward/space, before fixture-action. This
-            # coordinate is calibrated against the saved real-window capture.
-            self.click(g['width']-(368 if g['chat_available'] else 321), g['height']-60)
+            # layout calculation follows the fixture's sizes and the live display DPI.
+            self.click(*self.uosc_button_position(chat_button=False))
         if not self.geometry()['popup_open']: self.capture('popup-click-failed')
         assert self.geometry()['popup_open'], self.geometry()
         return self.geometry()
@@ -150,8 +159,29 @@ class Player:
             r=g['chat_button']
             self.click((r['x1']+r['x2'])/2,(r['y1']+r['y2'])/2)
         else:
-            self.click(g['width']-321,g['height']-60)
+            self.click(*self.uosc_button_position(chat_button=True))
         assert self.action()['value']=='chat' and not self.geometry()['popup_open'], self.action()
+
+    def uosc_button_position(self, chat_button=False):
+        # The test layout has four gap units and five fixed controls after the
+        # splay/chat position. No production/private configuration is inspected.
+        values={}
+        for raw in args.uosc_config.read_text(encoding='utf-8').splitlines():
+            if '=' in raw and not raw.lstrip().startswith('#'):
+                key,value=raw.split('=',1);values[key.strip()]=value.strip()
+        maximized=self.get('fullscreen',False) or self.get('window-maximized',False)
+        ui_scale=float(self.get('display-hidpi-scale',1))*float(values.get('scale_fullscreen' if maximized else 'scale',1))
+        size=round(float(values.get('controls_size',32))*ui_scale)
+        spacing=round(float(values.get('controls_spacing',2))*ui_scale)
+        margin=round(float(values.get('controls_margin',8))*ui_scale)
+        border=round(float(values.get('window_border_size',1))*ui_scale)
+        timeline=round(float(values.get('timeline_size',30))*ui_scale)
+        g=self.geometry()
+        trailing=4*(size+spacing)+size+4*size*.3+size/2
+        chat_visible=g['chat_available']
+        x=g['width']-border-margin-trailing-(size+spacing if chat_visible and not chat_button else 0)
+        y=g['height']-border-timeline-margin-size/2
+        return x,y
 
     def action(self): return self.get('user-data/overlay-test/action', {})
 
@@ -224,6 +254,35 @@ for mode in (('native','uosc') if args.mode=='all' else (args.mode,)):
         player.click_row(6)
         assert player.action()['value']=='seven-row-7','The seventh row must remain clickable'
         player.close_menu()
+        # Adaptive rows preserve endpoint/room text and an eighth action.
+        player.open_popup()
+        endpoint='syncplay.pl:8999'
+        room='周末电影一起看'
+        player.cmd('script-message-to','splay_overlay','splay-menu-model',json.dumps({
+            'title':'同步播放','items':[
+                {'title':'服务器: '+endpoint+' · 房间: '+room,'popup_title':endpoint,'subtitle':room,'value':'connection'},
+                *[{'title':'操作 '+str(index),'value':'eight-row-'+str(index)} for index in range(2,9)]]},ensure_ascii=False))
+        time.sleep(.2)
+        adaptive=player.geometry()
+        assert len(adaptive['rows'])==8 and adaptive['rows'][-1]['value']=='eight-row-8',adaptive
+        assert adaptive['rows'][0]['title']==endpoint and adaptive['rows'][0]['subtitle']==room,adaptive
+        assert all(a['y2']<=b['y1'] for a,b in zip(adaptive['rows'],adaptive['rows'][1:])),adaptive
+        assert adaptive['popup']['y2']<adaptive['height']-80,adaptive
+        player.click_row(7)
+        assert player.action()['value']=='eight-row-8'
+        player.close_menu()
+        # Long or overflowing models expose the full center menu explicitly.
+        player.open_popup()
+        player.cmd('script-message-to','splay_overlay','splay-menu-model',json.dumps({
+            'title':'很多操作','items':[{'title':'极长的操作名称'*12,'value':'long-'+str(index)} for index in range(20)]},ensure_ascii=False))
+        time.sleep(.2)
+        overflow=player.geometry()
+        assert overflow['rows'][-1]['expand'] and overflow['rows'][-1]['value']=='home',overflow
+        assert '展开完整菜单' in overflow['rows'][-1]['title'],overflow
+        assert all(row['y2']<=overflow['popup']['y2'] for row in overflow['rows']),overflow
+        player.click_row(len(overflow['rows'])-1)
+        assert player.action()['value']=='home'
+        player.close_menu()
         player.state()
         g=player.geometry()
         assert g['room_panel_visible'] and g['chat_available'], g
@@ -232,15 +291,70 @@ for mode in (('native','uosc') if args.mode=='all' else (args.mode,)):
         assert any('本机播放的电影.mp4' in r['text'] for r in rows), rows
         assert any('电影第一集.mp4' in r['text'] for r in rows), rows
         assert any(r['kind']=='playlist' and '1 / 2' in r['text'] for r in rows), rows
+        assert not any(r['kind']=='playlist-file' for r in rows),'Current media should not be repeated below the list state'
+        assert next(r['text'] for r in rows if r['kind']=='room')=='周末电影',rows
+        assert any(r['kind']=='media-summary' and '待确认' in r['text'] for r in rows),rows
+        # Enriched media remains local to presentation and preserves uncertainty.
+        long_title='A.Movie.With.A.Useful.Long.Release.Name.'*4+'.mp4'
+        player.state(local_media={'loaded':True,'title':long_title,'duration':123},
+                     members=[{'username':'本机用户','room':'周末电影','media':{'loaded':True,'title':long_title,'duration':123,'check':'self'}},
+                              {'username':'同伴','room':'周末电影','media':{'loaded':True,'title':long_title,'duration':150,'check':'duration_mismatch','duration_delta':27}}])
+        media_rows=player.geometry()['room_rows']
+        own_file=[r['text'] for r in media_rows if r['kind']=='file' and r['username']=='本机用户']
+        assert len(own_file)==2 and own_file[-1].endswith('.mp4'),media_rows
+        assert len(''.join(own_file))>40,media_rows
+        assert any(r['kind']=='media-summary' and '00:02:03' in r['text'] and '待确认' not in r['text'] for r in media_rows),media_rows
+        assert any(r['kind']=='media-summary' and '时长不同' in r['text'] and '+27 秒' in r['text'] for r in media_rows),media_rows
+        player.capture('media-check-delta')
+        # The countdown is current state, not a stream of notifications.
+        auto={'enabled':True,'delay':5,'pending':True,'remaining':5,'reason':'countdown','participants':3}
+        player.state(autostart=auto)
+        counting=player.geometry()
+        assert counting['autostart_remaining']==5 and counting['notification_count']==0,counting
+        assert any(r['kind']=='autostart' and '5 秒' in r['text'] for r in counting['room_rows']),counting
+        player.capture('autostart-countdown')
+        player.open_popup()
+        player.cmd('script-message-to','splay_overlay','splay-menu-model',json.dumps({'title':'同步播放','enabled':True,'items':[
+            {'title':'关闭 splay','value':'toggle-enabled'},
+            {'title':'syncplay.pl:8999 · 周末电影','popup_title':'syncplay.pl:8999','subtitle':'周末电影','value':'connection'},
+            {'title':'已准备','value':'ready'},
+            {'title':'取消自动开播（5 秒）','popup_title':'取消自动开播','subtitle':'5 秒后开播','value':'autostart-cancel'},
+            {'title':'共享播放列表','value':'playlist'},
+            {'title':'消息记录','subtitle':'Shift+h','value':'message-history'},
+            {'title':'设置','value':'settings'}]},ensure_ascii=False))
+        time.sleep(.2)
+        assert len(player.geometry()['rows'])==7 and player.geometry()['rows'][3]['subtitle']=='5 秒后开播'
+        player.capture('autostart-cancel-popup')
+        player.click_row(3)
+        assert player.action()['value']=='autostart-cancel' and not player.geometry()['popup_open']
+        player.close_menu()
+        auto.update(remaining=2)
+        player.state(autostart=auto)
+        assert player.geometry()['autostart_remaining']==2 and player.geometry()['notification_count']==0
+        player.cmd('set_property','cursor-autohide','always')
+        player.cmd('set_property','pause',False)
+        time.sleep(.25)
+        short_countdown=player.geometry()
+        assert not short_countdown['room_panel_visible'] and short_countdown['status_shown'],short_countdown
+        assert short_countdown['autostart_remaining']==2 and short_countdown['notification_count']==0
+        player.capture('autostart-short-status')
+        player.cmd('set_property','pause',True)
+        player.cmd('set_property','cursor-autohide',1800)
+        auto.update(pending=False,remaining=0,reason='waiting-reset')
+        player.state(autostart=auto)
+        assert not any(r['kind']=='autostart' for r in player.geometry()['room_rows'])
+        player.state()
         # Network entries keep their protocol URL but the right panel must
-        # never expose HTTP(S) userinfo, query tokens, or fragments.
+        # never expose userinfo, paths, query tokens, or fragments.
         action_before=player.action()
         for url,label in [
-            ('https://u:p@h/v.mp4?token=SECRET#PRIVATE','h/v.mp4'),
-            ('HTTP://u%40x:p@h:81/a?SECRET=1#PRIVATE','h:81/a'),
-            ('https://h/v.mp4?SECRET=1#PRIVATE','h/v.mp4'),
-            ('https://h#PRIVATE','h'),
-            ('https://u:p@h/a@b.mp4?SECRET','h/a@b.mp4'),
+            ('https://u:p@h/v.mp4?token=SECRET#PRIVATE','v.mp4'),
+            ('HTTP://u%40x:p@h:81/a?SECRET=1#PRIVATE','a'),
+            ('https://h/v.mp4?SECRET=1#PRIVATE','v.mp4'),
+            ('https://h#PRIVATE','网络媒体'),
+            ('https://u:p@h/a@b.mp4?SECRET','a@b.mp4'),
+            ('smb://u:p@h/private/v.mp4?SECRET','v.mp4'),
+            (r'C:\private\folder\本地文件.mp4','本地文件.mp4'),
             ('本地文件.mp4','本地文件.mp4'),
         ]:
             player.state(playlist={'files':[url],'index':0})
@@ -310,8 +424,7 @@ for mode in (('native','uosc') if args.mode=='all' else (args.mode,)):
         player.cmd('set_property','pause',False)
         time.sleep(.25)
         assert player.geometry()['room_panel_visible'], player.geometry()
-        time.sleep(2.0)
-        assert not player.geometry()['room_panel_visible'] and not player.geometry()['status_shown'], player.geometry()
+        player.wait_geometry('playing idle hides the room',lambda g:not g['room_panel_visible'] and not g['status_shown'])
         player.event(type='notice',id='while-hidden',category='room',text='朋友加入了房间')
         assert player.geometry()['notification_count']==1 and player.geometry()['status_shown']
         player.capture('playing-idle-notice')
@@ -340,8 +453,7 @@ for mode in (('native','uosc') if args.mode=='all' else (args.mode,)):
         time.sleep(.8)
         assert player.geometry()['room_panel_visible']
         player.cmd('set_property','cursor-autohide-fs-only',False)
-        time.sleep(.4)
-        assert not player.geometry()['room_panel_visible']
+        player.wait_geometry('cursor hide delay expires after FS-only is disabled',lambda g:not g['room_panel_visible'])
         player.cmd('set_property','pause',True)
         player.cmd('set_property','cursor-autohide',1800)
         player.event(type='chat',id='nul',username='朋友',text='前半\x00后半 \\u0000 100%')
@@ -410,8 +522,11 @@ for mode in (('native','uosc') if args.mode=='all' else (args.mode,)):
             assert player.get('options/script-opts')['uosc-controls']==foreign_controls
             assert player.get('options/script-opts')['overlay-test-later']=='preserved'
         player.capture('hidden')
+        results.append({'mode':mode,'passed':True,'adaptive_popup':True,'media_delta':True,'autostart_countdown':True,'countdown_cancel_click':True,'short_countdown_status':True})
         print(mode+': transient TTL/dedup/bounds, colored room/files/playlist, pause/idle/mouse/cursor policy, chat icon clicks, popup/timeline/foreign menus, resize, binding stability and controls ownership passed',flush=True)
     finally:
         player.close()
 print('Offline overlay review passed. Mocked host; no network/protocol claim.')
+(args.output/'result.json').write_text(json.dumps({'passed':True,'network_mocked':True,'modes':results,
+    'screenshots':[path.name for path in sorted(args.output.glob('*.png'))]},ensure_ascii=False,indent=2),encoding='utf-8')
 job.close()

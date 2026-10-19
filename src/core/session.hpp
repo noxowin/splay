@@ -32,12 +32,7 @@ namespace splay {
         bool retryable() const { return retryable_; }
         void receive(const std::string& line,double now);
         void command(const Json& command);
-        void playback(const Playback& value) {
-            const bool status_changed=local_.loaded!=value.loaded||local_.buffering!=value.buffering||local_.seekable!=value.seekable||
-                (std::abs(local_.speed-1)<.001)!=(std::abs(value.speed-1)<.001);
-            local_=value;
-            if(status_changed)notify();
-        }
+        void playback(const Playback& value);
         void local_change(bool seek,double now);
         void media_changed();
         void tick(double now);
@@ -69,6 +64,12 @@ namespace splay {
         std::deque<double> sentPings_;
         std::map<std::string,LatencyReport> latencyReports_;
         Playback local_;
+        bool autostartEnabled_=false,autostartPending_=false,autostartBlocked_=false,autostartResetSeen_=false;
+        bool membersComplete_=false,autostartAuthenticated_=false,autostartReadinessSupported_=false;
+        int autostartDelay_=5,autostartRemaining_=0;
+        double autostartDeadline_=0;
+        std::string autostartReason_="disabled";
+        Json autostartSnapshot_;
         Json pending_state_;
         Json pending_playlist_=Json::object();
         Json playlist_={{"files",Json::array()},{"index",nullptr},{"user",""}};
@@ -88,6 +89,9 @@ namespace splay {
         Json latency(const std::string&) const;
         void read_latency(const std::string&,const std::string&,const Json&);
         void reset_latency();
+        Json autostart_members() const;
+        void update_autostart(bool expire=false);
+        void cancel_autostart(const std::string& reason,bool disable=false);
         bool controlled() const;
         void file(bool refresh_list=true);
     };

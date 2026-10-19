@@ -76,17 +76,93 @@ local function plain(value, limit)
     end
     return table.concat(out)
 end
+-- Approximate font advance in ems, rather than treating ASCII like Han text.
+-- Keep the same grapheme boundaries for measuring, clipping and wrapping.
+local function text_units(text)
+    local total=0
+    for _,cp in ipairs(graphemes(text)) do
+        local a=cp:byte()
+        if a and a<128 then
+            total=total+(cp:match('[ ilI.,:;!|\'`]') and .32 or cp:match('[MW@%%]') and .9 or .6)
+        elseif a==194 or a==195 then total=total+.65
+        else total=total+1 end
+    end
+    return total
+end
+local function fit_text(value,units,keep_tail)
+    local text=plain(value,2048)
+    if text_units(text)<=units then return text,false end
+    if units<1 then return '',true end
+    local groups=graphemes(text)
+    local head,tail={},{}
+    local available=math.max(0,units-1)
+    if keep_tail then
+        local used=0
+        for i=#groups,1,-1 do
+            local advance=text_units(groups[i])
+            if used+advance>available*.35 then break end
+            table.insert(tail,1,groups[i]);used=used+advance
+        end
+        available=available-used
+    end
+    local used=0
+    for _,cp in ipairs(groups) do
+        local advance=text_units(cp)
+        if used+advance>available then break end
+        head[#head+1]=cp;used=used+advance
+    end
+    return table.concat(head)..'…'..table.concat(tail),true
+end
+local function wrap_text(value,units,max_rows,keep_tail)
+    local remaining=plain(value,2048)
+    local result={}
+    for i=1,max_rows do
+        if i==max_rows or text_units(remaining)<=units then
+            local final,clipped=fit_text(remaining,units,keep_tail)
+            result[#result+1]=final
+            return result,clipped
+        end
+        local row,used,consumed={},0,0
+        for _,cp in ipairs(graphemes(remaining)) do
+            local advance=text_units(cp)
+            if used+advance>units and #row>0 then break end
+            row[#row+1]=cp;used=used+advance;consumed=consumed+#cp
+        end
+        result[#result+1]=table.concat(row)
+        remaining=remaining:sub(consumed+1)
+    end
+    return result,false
+end
 local function playlist_label(value)
-    local text=tostring(value or '')
+    local text=tostring(value or ''):gsub('[%c]',' ')
     local scheme,rest=text:match('^%s*([%a][%w+.-]*)://(.*)$')
-    if not scheme or (scheme:lower()~='http' and scheme:lower()~='https') then return text end
-    -- This is presentation only: the original playlist URL stays intact in
-    -- state. Strip secrets before truncation/escaping, including userinfo in
-    -- the authority and all query/fragment parameters.
-    rest=rest:match('^[^?#]*') or ''
-    local authority,path=rest:match('^([^/]*)(.*)$')
-    authority=(authority or ''):gsub('^.*@','')
-    return authority~='' and authority..(path or '') or '网络媒体'
+    if scheme then
+        -- Never display an authority, credentials or parameters, even for
+        -- non-HTTP schemes. The original source stays intact in state.
+        local path=(rest:match('^[^?#]*') or ''):match('^[^/]*(/.*)$') or ''
+        return path:match('([^/\\]+)[/\\]*$') or '网络媒体'
+    end
+    if text:match('^%s*[%a][%w+.-]*:') and not text:match('^%a:[/\\]') then return '网络媒体' end
+    return text:match('([^/\\]+)[/\\]*$') or '未命名媒体'
+end
+local function positive_duration(value)
+    return type(value)=='number' and value==value and value>0 and value<math.huge and value or nil
+end
+local function autostart_countdown()
+    local value=type(state.autostart)=='table' and state.autostart or {}
+    local remaining=value.remaining
+    if state.connection~='connected' or value.enabled~=true or value.pending~=true or
+        type(remaining)~='number' or remaining~=remaining or remaining<0 or remaining>30 then return nil end
+    return math.ceil(remaining)
+end
+local function duration_difference(value)
+    if type(value)~='number' or value~=value or value<=-math.huge or value>=math.huge then return nil end
+    if value==0 then return '±0 秒' end
+    local amount=math.abs(value)
+    local text=amount>=1e6 and string.format('%.3g',amount) or
+        (string.format('%.6f',amount):gsub('0+$',''):gsub('%.$',''))
+    if text=='0' then text='<0.000001' end
+    return (value>0 and '+' or '−')..text..' 秒'
 end
 local function escape(text)
     return text:gsub('\\', '\\\239\187\191'):gsub('{', '\\{'):gsub('}', '\\}')
@@ -128,7 +204,7 @@ local function time_string(value)
     return string.format('%02d:%02d:%02d', math.floor(seconds/3600), math.floor(seconds/60)%60, seconds%60)
 end
 local function line(text, color, x, y, size)
-    return string.format('{\\an7\\pos(%.1f,%.1f)\\fn%s\\fs%.1f\\bord1.2\\shad1\\1c&H%s&\\3c&H171717&}%s',
+    return string.format('{\\an7\\q2\\pos(%.1f,%.1f)\\fn%s\\fs%.1f\\bord1.2\\shad1\\1c&H%s&\\3c&H171717&}%s',
         x,y,'sans-serif',size,color,escape(text))
 end
 local function clear_events()
@@ -149,9 +225,10 @@ local function publish_geometry()
         rows=popup_open and menu_rows or {},enabled=state.enabled==true,
         chat_count=#chats,playback_active=playback ~= nil,status_enabled=cfg.status_osd,
         notification_count=notification_count,room_panel_visible=panel_visible,
+        autostart_remaining=autostart_countdown(),
         room_panel=panel_visible and panel_geometry or nil,room_rows=panel_visible and panel_rows or {},
         chat_available=chat_available(),chat_button=visible and rectangles[2] or nil,
-        status_shown=state.enabled==true and cfg.status_osd and (panel_visible or notification_count>0)})
+        status_shown=state.enabled==true and cfg.status_osd and (panel_visible or notification_count>0 or autostart_countdown()~=nil)})
 end
 redraw = function()
     width, height = mp.get_osd_size()
@@ -179,6 +256,8 @@ redraw = function()
     panel_visible=room_visible(); panel_rows={}; panel_geometry=nil
     notification_count=#chats+#notices+(playback and 1 or 0)
     if cfg.status_osd and state.enabled==true then
+        local countdown=autostart_countdown()
+        if countdown and not panel_visible then add('自动开播 · '..countdown..' 秒（菜单可取消）','FFFF75',2) end
         if playback then add(playback.text,'FFFF75',2) end
         for _,item in ipairs(notices) do
             if y+size*2.7>height*.62 then break end
@@ -191,17 +270,18 @@ redraw = function()
         if panel_visible then
             local px,py=width-margin-panel_width,margin
             local psize=size*.83
-            local max_chars=math.max(4,math.floor(panel_width/psize)-1)
+            local max_units=math.max(2,panel_width/psize-1)
             local max_y=height*.56
-            local function member_line(text,tint,kind,username)
+            local function member_line(text,tint,kind,username,latency)
                 if py+psize*1.4>max_y then return false end
-                text=plain(text,max_chars)
+                text=fit_text(text,max_units)
                 rows[#rows+1]=line(text,tint,px,py,psize)
-                panel_rows[#panel_rows+1]={text=text,color=tint,kind=kind,username=username}
+                panel_rows[#panel_rows+1]={text=text,color=tint,kind=kind,username=username,latency=latency}
                 py=py+psize*1.4
                 return true
             end
-            member_line('房间 · '..plain(state.room,64),'FFFFFF','room')
+            member_line(state.room,'FFFFFF','room')
+            if countdown then member_line('自动开播 · '..countdown..' 秒','FFFF75','autostart') end
             local members={}
             for _,member in ipairs(state.members or {}) do
                 if type(member)=='table' and (member.room==nil or member.room==state.room) then members[#members+1]=member end
@@ -209,26 +289,44 @@ redraw = function()
             local playlist=type(state.playlist)=='table' and state.playlist or nil
             local reserve=playlist and type(playlist.files)=='table' and #playlist.files>0 and psize*2.8 or 0
             local shown=0
+            local displayed_files={}
             local latency_enabled=type(state.latency)=='table' and state.latency.enabled==true
             for _,member in ipairs(members) do
-                if py+psize*(latency_enabled and 5.6 or 4.2)+reserve>max_y then break end
+                local own=member.username==state.username
+                local media=type(member.media)=='table' and member.media or nil
+                if own and type(state.local_media)=='table' then media=state.local_media end
+                local fallback=type(member.file)=='table' and member.file or {}
+                local file=media and media.title or fallback.name
+                if not media and own and type(state.local_file)=='string' and state.local_file~='' then file=state.local_file end
+                local loaded=media and media.loaded==true or not media and type(file)=='string' and file~=''
+                local label=loaded and playlist_label(file) or '尚未载入文件'
+                local file_lines=wrap_text(label,math.max(1,max_units-text_units('  ')),2,true)
+                local duration=loaded and (media and positive_duration(media.duration) or not media and positive_duration(fallback.duration)) or nil
+                local comparison=type(member.media)=='table' and member.media or {}
+                local labels={metadata_match='疑似同片',duration_match='时长一致',duration_mismatch='时长不同',name_mismatch='名称不同',unknown='待确认'}
+                local check=labels[comparison.check] or '待确认'
+                local difference=loaded and comparison.check~='unknown' and duration_difference(comparison.duration_delta) or nil
+                local summary=(duration and time_string(duration) or '时长未知')..((own or comparison.check=='self') and '' or ' · '..check..(difference and ' '..difference or ''))
+                local needed=(#file_lines+2)*psize*1.4
+                local more_reserve=shown+1<#members and psize*1.4 or 0
+                if py+needed+reserve+more_reserve>max_y then break end
                 local tint=member.ready==true and '80E692' or member.ready==false and '7777FF' or '999999'
-                member_line((member.ready==true and '● ' or member.ready==false and '● ' or '○ ')..plain(member.username,40),tint,'member',member.username)
-                local file=type(member.file)=='table' and member.file.name or nil
-                if member.username==state.username and type(state.local_file)=='string' and state.local_file~='' then file=state.local_file end
-                member_line('  '..(type(file)=='string' and file~='' and file or '尚未载入文件'),'BBBBBB','file',member.username)
+                local latency_text
                 if latency_enabled then
-                    local own=member.username==state.username
                     local latency=own and state.latency or member.latency
                     latency=type(latency)=='table' and latency or {}
                     local measured=type(latency.rtt_ms)=='number' and latency.rtt_ms or nil
                     if measured and (measured~=measured or measured<0 or measured>10000) then measured=nil end
-                    local text
-                    if latency.stale==true then text='已过期'
-                    elseif measured then text=string.format('%.0f ms',measured)
-                    else text=own and '测量中' or '未上报' end
-                    member_line('  延迟 · '..text..(own and '' or '（自报）'),'AAAAAA','latency',member.username)
+                    latency_text='◷ '..(latency.stale~=true and measured and string.format('%.0f ms',measured) or '—')
                 end
+                local marker=(type(member.ready)=='boolean' and '● ' or '○ ')
+                if latency_text and text_units(marker..'  '..latency_text)>max_units then latency_text='◷ —' end
+                local suffix=latency_text and '  '..latency_text or ''
+                local name=fit_text(member.username,math.max(0,max_units-text_units(marker..suffix)))
+                member_line(marker..name..suffix,tint,'member',member.username,latency_text)
+                for _,file_line in ipairs(file_lines) do member_line('  '..file_line,'BBBBBB','file',member.username) end
+                member_line('  '..summary,'AAAAAA','media-summary',member.username)
+                if loaded then displayed_files[label]=true end
                 shown=shown+1
             end
             if shown<#members then member_line('… 另有 '..(#members-shown)..' 位成员','999999','more') end
@@ -237,7 +335,12 @@ redraw = function()
                 local index=tonumber(playlist.index)
                 local current=index and index>=0 and index<#playlist.files and math.floor(index)+1 or nil
                 member_line('共享列表 · '..(current and current..' / ' or '')..#playlist.files..' 项','BBBBBB','playlist')
-                if current then member_line('  '..playlist_label(playlist.files[current]),'BBBBBB','playlist-file') end
+                if current then
+                    local label=playlist_label(playlist.files[current])
+                    if not displayed_files[label] then
+                        member_line('  '..label,'BBBBBB','playlist-file')
+                    end
+                end
             end
             panel_geometry={x1=px,y1=margin,x2=width-margin,y2=py}
         end
@@ -485,37 +588,91 @@ update_buttons=function()
         end
     end
     if popup_open then
-        local count=math.min(7,#(menu_model.items or {}))
-        local row_height=34*scale
-        local pw=math.min(292*scale,width-16)
-        local ph=(count*34+38)*scale
-        ph=math.min(ph,height-16)
+        local padding=12*scale
+        local font=16*scale
+        local subtitle_font=14*scale
+        local items=type(menu_model.items)=='table' and menu_model.items or {}
+        local preferred=292*scale
+        for _,item in ipairs(items) do
+            if type(item)=='table' then
+                preferred=math.max(preferred,text_units(plain(item.popup_title or item.title,2048))*font+2*padding)
+                if item.subtitle then preferred=math.max(preferred,text_units(plain(item.subtitle,2048))*subtitle_font+2*padding) end
+            end
+        end
+        local pw=math.max(1,math.min(preferred,560*scale,width-16))
+        local available_units=math.max(1,(pw-2*padding)/font)
+        local layouts,needs_full={},false
+        for _,item in ipairs(items) do
+            if type(item)~='table' then item={title=plain(item),selectable=false} end
+            local title_lines,clipped=wrap_text(item.popup_title or item.title,available_units,2)
+            local subtitle_lines,subtitle_clipped={},false
+            if item.subtitle~=nil then
+                subtitle_lines,subtitle_clipped=wrap_text(item.subtitle,math.max(1,(pw-2*padding)/subtitle_font),2)
+            end
+            layouts[#layouts+1]={item=item,title_lines=title_lines,subtitle_lines=subtitle_lines,
+                height=14*scale+#title_lines*font*1.3+#subtitle_lines*subtitle_font*1.3}
+            needs_full=needs_full or clipped or subtitle_clipped
+        end
         local ax=anchor and anchor.x or width/2
         local ay=anchor and anchor.y or height-80*scale
         -- Keyboard/programmatic opens may leave the pointer on the timeline.
         -- The popup always ends above the controls, regardless of pointer y.
-        local bottom_limit=math.max(16,controls_top()-8*scale)
+        local bottom_limit=math.max(8,math.min(height-8,controls_top()-8*scale))
         if rectangles[1] then bottom_limit=math.min(bottom_limit,rectangles[1].y1-8*scale) end
-        ay=math.min(ay,bottom_limit+12*scale)
-        ph=math.min(ph,math.max(8,bottom_limit-8))
+        local max_height=math.max(0,bottom_limit-8)
+        local header_lines,header_clipped=wrap_text(menu_model.title or '同步播放',math.max(1,(pw-2*padding)/subtitle_font),2)
+        local header_height=16*scale+#header_lines*subtitle_font*1.3
+        local footer_lines=wrap_text('展开完整菜单',available_units,2)
+        local footer_height=14*scale+#footer_lines*font*1.3
+        local total=header_height+4*scale
+        for _,layout in ipairs(layouts) do total=total+layout.height end
+        needs_full=needs_full or header_clipped or total>max_height
+        local shown_layouts={}
+        local ph=header_height+4*scale
+        for _,layout in ipairs(layouts) do
+            if ph+layout.height+(needs_full and footer_height or 0)>max_height then break end
+            shown_layouts[#shown_layouts+1]=layout;ph=ph+layout.height
+        end
+        if needs_full then
+            shown_layouts[#shown_layouts+1]={item={value='home'},title_lines=footer_lines,subtitle_lines={},height=footer_height,expand=true}
+            ph=ph+footer_height
+        end
+        -- A tiny viewport cannot hold even the explicit expansion action.
+        -- Delegate to the existing complete center menu instead of clipping it.
+        if ph>max_height or pw<2*padding+font*5 then
+            popup_open=false;popup=nil;menu_rows={}
+            mp.disable_key_bindings(escape_section)
+            set_uosc_button()
+            send('splay-action','home')
+            update_buttons()
+            return
+        end
         local left=math.max(8,math.min(width-pw-8,ax-pw/2))
-        local top=math.max(8,math.min(height-ph-8,ay-ph-12*scale))
+        local top=math.max(8,math.min(bottom_limit-ph,ay-ph-12*scale))
         popup={x1=left,y1=top,x2=left+pw,y2=top+ph}
         rect(drawing,popup,'222222','08')
-        local chars=math.max(6,math.floor((pw-24*scale)/(15*scale)))
-        drawing[#drawing+1]=line(plain(menu_model.title or '同步播放',chars),'AAAAAA',left+12*scale,top+9*scale,14*scale)
+        for i,text in ipairs(header_lines) do
+            drawing[#drawing+1]=line(text,'AAAAAA',left+padding,top+8*scale+(i-1)*subtitle_font*1.3,subtitle_font)
+        end
         menu_rows={}
-        for i=1,count do
-            local item=menu_model.items[i]
-            if type(item)~='table' then item={title=plain(item),selectable=false} end
-            local r={x1=left+4*scale,y1=top+34*scale+(i-1)*row_height,
-                x2=left+pw-4*scale,y2=math.min(top+34*scale+i*row_height,popup.y2-4*scale),
-                value=tostring(item.value or ''),selectable=item.selectable~=false and type(item.value)=='string'}
-            if r.y2>r.y1 then
-                menu_rows[#menu_rows+1]=r
-                if mouse.hover and point_in(x,y,r) and r.selectable then rect(drawing,r,'514332') end
-                drawing[#drawing+1]=line(plain(item.title,chars),r.selectable and 'FFFFFF' or '888888',left+12*scale,r.y1+7*scale,16*scale)
+        local row_y=top+header_height
+        for _,layout in ipairs(shown_layouts) do
+            local item=layout.item
+            local r={x1=left+4*scale,y1=row_y,x2=left+pw-4*scale,y2=row_y+layout.height,
+                value=tostring(item.value or ''),selectable=item.selectable~=false and type(item.value)=='string',
+                title=table.concat(layout.title_lines,'\n'),subtitle=table.concat(layout.subtitle_lines,'\n'),expand=layout.expand or false}
+            menu_rows[#menu_rows+1]=r
+            if mouse.hover and point_in(x,y,r) and r.selectable then rect(drawing,r,'514332') end
+            local text_y=row_y+7*scale
+            for _,text in ipairs(layout.title_lines) do
+                drawing[#drawing+1]=line(text,r.selectable and 'FFFFFF' or '888888',left+padding,text_y,font)
+                text_y=text_y+font*1.3
             end
+            for _,text in ipairs(layout.subtitle_lines) do
+                drawing[#drawing+1]=line(text,'AAAAAA',left+padding,text_y,subtitle_font)
+                text_y=text_y+subtitle_font*1.3
+            end
+            row_y=r.y2
         end
         -- Popup owns Escape and clicks only while it is open. Outside clicks
         -- close it and are forwarded once after removing this binding.

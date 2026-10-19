@@ -215,11 +215,94 @@ namespace splay {
         // Generated lazily only when sharing has explicitly been enabled.
         latencySession_.clear();
     }
+    Json Session::autostart_members() const {
+        Json result=Json::object();
+        for(const auto& entry:members_)if(entry.second.value("room",std::string())==room_)
+            result[entry.first]={{"file",entry.second["file"]},{"controller",entry.second["is_controller"]}};
+        return result;
+    }
+    void Session::cancel_autostart(const std::string& reason,bool disable){
+        const bool pending=autostartPending_;
+        autostartPending_=false;
+        autostartRemaining_=0;
+        autostartDeadline_=0;
+        if(autostartEnabled_){autostartBlocked_=true;autostartResetSeen_=false;autostartReason_=reason;}
+        if(disable){autostartEnabled_=false;autostartReason_="disabled";}
+        if(pending)publish_event({{"type","autostart"},{"action","cancelled"},{"reason",reason}});
+    }
+    void Session::update_autostart(bool expire){
+        const auto before=Json::array({autostartPending_,autostartRemaining_,autostartReason_});
+        const auto snapshot=autostart_members();
+        bool allReady=membersComplete_&&snapshot.contains(user_)&&snapshot.size()>=2;
+        bool readinessAll=allReady;
+        for(const auto& entry:snapshot.items()){
+            const auto& member=members_.at(entry.key());
+            if(member["ready"]!=Json(true)){readinessAll=false;allReady=false;}
+            if(!member["file"].is_object()||member["file"].empty())allReady=false;
+        }
+        // A new readiness phase is the only implicit way to rearm. Membership,
+        // file, permission and media recovery alone must never resume a timer.
+        if(autostartEnabled_&&autostartPending_&&snapshot!=autostartSnapshot_)cancel_autostart("waiting-reset");
+        std::string reason;
+        if(!autostartEnabled_)reason="disabled";
+        else if(!logged_)reason="disconnected";
+        else if(!autostartReadinessSupported_)reason="unsupported";
+        else if(controlled()&&(!controller_||!autostartAuthenticated_))reason="no-permission";
+        else if(!membersComplete_||!snapshot.contains(user_))reason="waiting-snapshot";
+        else if(snapshot.size()<2)reason="waiting-members";
+        else if(!allReady)reason="waiting-ready";
+        else if(!local_.loaded||!local_.paused||local_.buffering||!local_.seekable||!std::isfinite(local_.speed)||std::abs(local_.speed-1)>=.001)reason="waiting-media";
+        if(autostartPending_&&!reason.empty())cancel_autostart(reason);
+        if(autostartEnabled_&&autostartBlocked_&&membersComplete_){
+            // Only explicit readiness (false/unknown), with a complete room,
+            // establishes a new phase. File disappearance alone is no reset.
+            if(snapshot.contains(user_)&&snapshot.size()>=2&&!readinessAll)autostartResetSeen_=true;
+            if(readinessAll&&autostartResetSeen_){autostartBlocked_=false;autostartResetSeen_=false;}
+        }
+        if(autostartEnabled_&&allReady&&autostartBlocked_&&reason!="no-permission"&&reason!="unsupported")
+            reason=autostartReason_=="started"?"started":"waiting-reset";
+        if(reason.empty()&&!autostartBlocked_){
+            if(!autostartPending_){
+                autostartPending_=true;
+                autostartSnapshot_=snapshot;
+                autostartDeadline_=now_+autostartDelay_;
+            }
+            autostartRemaining_=static_cast<int>(std::ceil(std::max(0.0,autostartDeadline_-now_)));
+            reason="countdown";
+            if(expire&&now_>=autostartDeadline_){
+                // Use the normal pause correction / State change channel only.
+                // Never seek, reload media or run the local-ready gesture path.
+                autostartPending_=false;
+                autostartBlocked_=true;
+                autostartResetSeen_=false;
+                autostartRemaining_=0;
+                autostartDeadline_=0;
+                local_.paused=false;
+                Correction correction;correction.paused=false;
+                if(apply)apply(correction);
+                reply(Json::object(),true,false);
+                reason="started";
+                publish_event({{"type","autostart"},{"action","started"}});
+            }
+        }
+        if(reason.empty())reason="waiting-reset";
+        autostartReason_=reason;
+        if(before!=Json::array({autostartPending_,autostartRemaining_,autostartReason_}))notify();
+    }
+    void Session::playback(const Playback& value){
+        const bool status_changed=local_.loaded!=value.loaded||local_.buffering!=value.buffering||local_.seekable!=value.seekable||
+            (std::abs(local_.speed-1)<.001)!=(std::abs(value.speed-1)<.001);
+        local_=value;
+        update_autostart();
+        if(status_changed)notify();
+    }
     void Session::clear_playlist(){
         playlist_={{"files",Json::array()},{"index",nullptr},{"user",""}};
         pending_playlist_=Json::object();
     }
     void Session::room_changed(const std::string& room){
+        cancel_autostart("room-changed",true);
+        membersComplete_=autostartAuthenticated_=false;
         const auto previous=room_;
         const bool withdraw=latencyPublished_;
         room_=room;
@@ -251,6 +334,8 @@ namespace splay {
         reconnect();
     }
     void Session::reconnect(){
+        cancel_autostart("reconnected",true);
+        membersComplete_=autostartAuthenticated_=autostartReadinessSupported_=false;
         connection_="connecting";
         retryable_=false;
         encrypted_=false;
@@ -272,7 +357,7 @@ namespace splay {
     void Session::connected(bool secure,double now){
         encrypted_=secure;
         lastReceive_=now;
-        now_=now;
+        now_=std::max(now_,now);
         Json hello={
             {"username",user_}
             ,{
@@ -302,6 +387,8 @@ namespace splay {
         );
     }
     void Session::disconnected(const std::string& error,bool retryable){
+        cancel_autostart("disconnected",true);
+        membersComplete_=autostartAuthenticated_=autostartReadinessSupported_=false;
         const auto previous=connection_;
         const auto previousError=error_;
         logged_=false;
@@ -355,6 +442,8 @@ namespace splay {
             ,{"warning",warning}
             ,{"latency",ownLatency}
             ,{"members",members}
+            ,{"autostart",{{"enabled",autostartEnabled_},{"delay",autostartDelay_},{"pending",autostartPending_},
+                {"remaining",autostartRemaining_},{"reason",autostartReason_},{"participants",autostart_members().size()}}}
         };
     }
     Json Session::latency(const std::string& user) const {
@@ -412,10 +501,16 @@ namespace splay {
         };
         if(user==user_){
             controller_=flag(j,"controller");
+            if(!controller_&&autostartAuthenticated_){
+                autostartAuthenticated_=false;
+                cancel_autostart("no-permission");
+            }
             if(ready.is_boolean())ready_=ready.get<bool>();
         }
     }
     void Session::media_changed(){
+        cancel_autostart("waiting-reset");
+        update_autostart();
         first_=true;
         if(logged_)file();
     }
@@ -486,6 +581,7 @@ namespace splay {
             auto v=item.value();
             if(!v.is_object())continue;
             const bool known=members_.count(item.key())!=0;
+            if(!known&&!(v.contains("event")&&v["event"].is_object()&&flag(v["event"],"joined")))membersComplete_=false;
             Json old=known?members_[item.key()]:Json::object();
             if(v.contains("event")&&v["event"].is_object()&&v["event"].contains("left")){
                 members_.erase(item.key());
@@ -502,6 +598,13 @@ namespace splay {
             member(item.key(),r,v,file_update,known||(v.contains("event")&&v["event"].is_object()&&flag(v["event"],"joined")));
             auto current=members_.find(item.key());
             if(current==members_.end())continue;
+            if(autostartPending_){
+                const bool previouslyHere=known&&old.value("room",std::string())==room_;
+                const bool currentlyHere=r==room_;
+                if(previouslyHere!=currentlyHere||(currentlyHere&&known&&
+                   (old["file"]!=current->second["file"]||old["is_controller"]!=current->second["is_controller"])))
+                    cancel_autostart("waiting-reset");
+            }
             if(!known&&v.contains("event")&&v["event"].is_object()&&flag(v["event"],"joined")){
                 publish_event({{"type","user"},{"action","joined"},{"username",item.key()},{"room",r}});
             }
@@ -536,6 +639,8 @@ namespace splay {
             bool success=flag(v,"success");
             if(success&&members_.count(u))members_[u]["is_controller"]=true;
             if(u==user_&&r==room_){
+                if(autostartAuthenticated_!=success)cancel_autostart(success?"waiting-reset":"no-permission");
+                autostartAuthenticated_=success;
                 if(success){controller_=true;error_.clear();}
                 else error_="Operator authentication failed";
             }
@@ -584,7 +689,7 @@ namespace splay {
             auto j=Json::parse(line);
             if(!j.is_object())throw std::runtime_error("object");
             lastReceive_=now;
-            now_=now;
+            now_=std::max(now_,now);
             if(j.contains("Error")){
                 disconnected("Server rejected the request");
                 return;
@@ -604,12 +709,14 @@ namespace splay {
                 chatSupported_=false;
                 playlistSupported_=version_at_least(h,4);
                 readySupported_=true;
+                autostartReadinessSupported_=version_at_least(h,3);
                 chatMaxLength_=150;
                 auto features=h.find("features");
                 if(features!=h.end()&&features->is_object()){
                     chatSupported_=flag(*features,"chat");
                     playlistSupported_=flag(*features,"sharedPlaylists",playlistSupported_);
                     readySupported_=flag(*features,"readiness",true);
+                    autostartReadinessSupported_=flag(*features,"readiness",autostartReadinessSupported_);
                     auto limit=features->find("maxChatMessageLength");
                     if(limit!=features->end()&&limit->is_number_integer()){
                         auto value=limit->get<long long>();
@@ -646,10 +753,20 @@ namespace splay {
             if(logged_&&j.contains("List")&&j["List"].is_object()){
                 members_.clear();
                 controller_=false;
-                for(auto& r:j["List"].items())if(r.value().is_object())for(auto& u:r.value().items())if(u.value().is_object())member(u.key(),r.key(),u.value());
+                membersComplete_=true;
+                for(auto& r:j["List"].items()){
+                    if(!r.value().is_object()||r.key().size()>256){membersComplete_=false;continue;}
+                    for(auto& u:r.value().items()){
+                        if(!u.value().is_object()||u.key().size()>256||u.key().find_first_not_of(' ')==std::string::npos){membersComplete_=false;continue;}
+                        if(members_.count(u.key()))membersComplete_=false;
+                        member(u.key(),r.key(),u.value());
+                    }
+                }
+                if(!members_.count(user_)||members_[user_].value("room",std::string())!=room_)membersComplete_=false;
                 for(auto i=latencyReports_.begin();i!=latencyReports_.end();)if(!members_.count(i->first))i=latencyReports_.erase(i);else ++i;
             }
             if(logged_&&j.contains("State")&&j["State"].is_object())state(j["State"],now);
+            update_autostart();
             notify();
         }
         catch(const std::exception&){
@@ -685,6 +802,11 @@ namespace splay {
         );
     }
     void Session::state(const Json& s,double now){
+        if(s.contains("playstate")&&s["playstate"].is_object()){
+            const auto& play=s["playstate"];
+            if(play.contains("paused")&&play["paused"].is_boolean()&&number(play,"position",-1)>=0&&
+               ((autostartPending_&&!flag(play,"paused"))||flag(play,"doSeek")||local_.paused!=flag(play,"paused")))cancel_autostart("waiting-reset");
+        }
         if(s.contains("ignoringOnTheFly")&&s["ignoringOnTheFly"].is_object()){
             auto& i=s["ignoringOnTheFly"];
             if(i.contains("server")){
@@ -754,7 +876,9 @@ namespace splay {
         eventTime_=now;
     }
     void Session::local_change(bool seek,double now){
-        now_=now;
+        now_=std::max(now_,now);
+        cancel_autostart("waiting-reset");
+        update_autostart();
         // Only the adapter's explicit local pause-change path reaches this.
         // A remote correction, load, heartbeat or seek cannot set readiness.
         if(logged_&&readySupported_&&local_.loaded&&!local_.buffering&&!seek&&!local_.paused&&!ready_&&!readyRequested_){
@@ -767,14 +891,34 @@ namespace splay {
         const auto previous=latency(user_);
         bool expired=false;
         for(const auto& value:latencyReports_)if(value.second.reported&&now_-value.second.received<30&&now-value.second.received>=30)expired=true;
-        now_=now;
+        now_=std::max(now_,now);
         if((logged_||connection_=="connecting")&&lastReceive_>0&&now-lastReceive_>12.5)disconnected("Server timed out",true);
         if(logged_&&latencyEnabled_&&local_.loaded&&rttSample_&&
            ((!latencyPublished_&&now_-rttReceived_<30)||(latencyPublished_&&now_-lastLatencyShare_>=10)))file(false);
+        update_autostart(true);
         if(expired||previous!=latency(user_))notify();
     }
     void Session::command(const Json& c){
         auto a=str(c,"action");
+        if(a=="autostart"){
+            if(!c.contains("enabled")||!c["enabled"].is_boolean())throw std::runtime_error("Invalid automatic-start preference");
+            int delay=5;
+            if(c.contains("delay")){
+                if(!c["delay"].is_number_integer()||c["delay"]<3||c["delay"]>30)throw std::runtime_error("Automatic-start delay must be an integer from 3 to 30");
+                delay=c["delay"].get<int>();
+            }
+            cancel_autostart("disabled",true);
+            autostartEnabled_=c["enabled"].get<bool>();
+            autostartDelay_=delay;
+            autostartBlocked_=autostartResetSeen_=false;
+            update_autostart();
+            notify();return;
+        }
+        if(a=="autostart-cancel"){
+            cancel_autostart("waiting-reset");
+            update_autostart();
+            notify();return;
+        }
         if(a=="latency"){
             if(!c.contains("enabled")||!c["enabled"].is_boolean())throw std::runtime_error("Invalid latency preference");
             const bool enabled=c["enabled"].get<bool>();
@@ -834,6 +978,12 @@ namespace splay {
         }
         else if(a=="ready"){
             if(!c.contains("ready")||!c["ready"].is_boolean())throw std::runtime_error("Invalid readiness");
+            if(!c["ready"].get<bool>()){
+                // Withdrawal takes effect for this local policy immediately;
+                // keep public readiness authoritative until the server echo.
+                cancel_autostart("waiting-reset");
+                update_autostart();
+            }
             emit({
                 {
                     "Set",{

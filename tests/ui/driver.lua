@@ -1,4 +1,6 @@
 local utils=require 'mp.utils'
+local opt={mode='native',output=''}
+require('mp.options').read_options(opt,'driver')
 mp.register_script_message('ui-test-command',function(json)
     print('COMMAND '..json)
 end)
@@ -28,9 +30,38 @@ after(0.5,function()
             mp.commandv('script-message-to','splay','splay-action','toggle-enabled')
             wait_until('splay enables',function() return mp.get_property_native('user-data/splay').enabled==true end,function()
                 mp.commandv('script-message-to','splay','splay-open','uosc')
-                after(.35,function()
+                after(.6,function()
                     print('UOSC_MENU '..(mp.get_property_native('user-data/uosc/menu/type') or 'none'))
-                    print('UI_SMOKE_COMPLETED');mp.commandv('quit')
+                    mp.osd_message('',0)
+                    if opt.output~='' then mp.commandv('screenshot-to-file',opt.output..'/home-disconnected.png','window') end
+                    mp.commandv('script-message-to','uosc','close-menu','splay')
+                    mp.commandv('script-message-to','console','disable')
+                    after(.2,function()
+                        local duration=mp.get_property_native('duration')
+                        assert(type(duration)=='number' and duration>0,'isolated fixture media must be loaded')
+                        mp.commandv('script-message-to','splay','splay-state',utils.format_json({schema=1,
+                            connection='connected',host='syncplay.test',port=8999,username='本机',room='UI 验收房间',ready=true,
+                            autostart={enabled=false,pending=false,reason='disabled'},
+                            members={{username='本机',room='UI 验收房间',ready=true,file={name='**Hidden filename**',duration=duration}},
+                                {username='同伴',room='UI 验收房间',ready=true,file={name='另一剪辑版.mp4',duration=duration+12.3}}}}))
+                        mp.commandv('script-message-to','splay','splay-open',opt.mode)
+                        after(.25,function()
+                            if opt.output~='' then mp.commandv('screenshot-to-file',opt.output..'/home-connected.png','window') end
+                            mp.commandv('script-message-to','splay','splay-action','members')
+                            after(.4,function()
+                                local opened=opt.mode=='uosc' and mp.get_property_native('user-data/uosc/menu/type')=='splay' or
+                                    opt.mode=='native' and mp.get_property_native('user-data/mpv/console/open')==true
+                                assert(opened,'production member details must open')
+                                if opt.output~='' then mp.commandv('screenshot-to-file',opt.output..'/members.png','window') end
+                                mp.commandv('script-message-to','splay','splay-action','member-details:同伴')
+                                after(.35,function()
+                                    if opt.output~='' then mp.commandv('screenshot-to-file',opt.output..'/members-details.png','window') end
+                                    print('UI_MEMBER_DETAILS '..opt.mode)
+                                    after(.15,function() print('UI_SMOKE_COMPLETED');mp.commandv('quit') end)
+                                end)
+                            end)
+                        end)
+                    end)
                 end)
             end)
         end)

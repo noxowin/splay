@@ -4,7 +4,7 @@ real_mp.add_timeout(10,function() real_mp.commandv('quit',2) end)
 local utils=require 'mp.utils'
 local options=require 'mp.options'
 local opt={source=''};options.read_options(opt,'forms')
-local handlers,commands,selected,prompted,bindings,notices,properties,observers,active_request
+local handlers,commands,selected,prompted,bindings,notices,properties,observers,active_request,registered_events
 local terminated
 local overrides={}
 local fixture={host='history.example',port=9001,username='历史昵称',room='历史房间',tls='require'}
@@ -16,7 +16,7 @@ fake.get_property_native=function(name) return properties[name] end
 fake.set_property_native=function(name,value) properties[name]=value end
 fake.observe_property=function(name,_,fn) observers[name]=fn;fn(name,properties[name]) end
 fake.register_script_message=function(name,fn) handlers[name]=fn end
-fake.register_event=function() end
+fake.register_event=function(name,fn) registered_events[name]=fn end
 fake.add_timeout=function(_,fn) fn() end
 fake.add_key_binding=function(key,name,fn,flags) bindings[name]={key=key,fn=fn,flags=flags};handlers[name]=fn end
 fake.add_forced_key_binding=function(key,name,fn) bindings[name]={key=key,fn=fn,forced=true} end
@@ -31,6 +31,7 @@ package.loaded['mp.input']={select=function(value) selected=value;active_request
     end}
 local function start(config)
     handlers,commands,selected,prompted,bindings,notices,observers={},{},nil,nil,{},{},{}
+    registered_events={}
     terminated=0;active_request=nil
     properties={['options/load-console']=true,path='https://private.example/SECRET_URL',filename='本机影片.mp4',['idle-active']=false}
     overrides=config or {}
@@ -81,7 +82,7 @@ local function prop(name,value)
     properties[name]=value;if observers[name] then observers[name](name,value) end
 end
 local function state(extra)
-    local value={schema=1,connection='connected',members={},room='active-room',chat_supported=true,chat_max_length=3,ready=false}
+    local value={schema=1,connection='connected',host='history.example',port=9001,members={},room='active-room',chat_supported=true,chat_max_length=3,ready=false}
     for key,item in pairs(extra or {}) do value[key]=item end
     handlers['splay-state'](utils.format_json(value))
 end
@@ -91,6 +92,12 @@ end
 local function label(fragment)
     for _,text in ipairs(selected.items) do if text:find(fragment,1,true) then return true end end
     return false
+end
+local function history_label()
+    act('more')
+    local result
+    for _,text in ipairs(selected.items) do if text:find('消息记录:',1,true) then result=text end end
+    dismiss();return result
 end
 start()
 assert(bindings['splay-panel'].key=='Shift+s' and bindings['splay-panel'].flags==nil)
@@ -105,27 +112,27 @@ assert(count('connect')==0 and properties['user-data/splay'].enabled==false,'emp
 act('toggle-enabled');assert(properties['user-data/splay'].enabled and count('connect')==0)
 assert(bindings['splay-message-history'].key=='Shift+h' and not bindings['splay-message-history'].forced)
 act('connect');assert(count('connect')==0,'first-run room must be blank')
-act('connection');assert(#selected.items<=7 and label('请先输入或选择'));dismiss()
+act('connection');assert(label('请先输入或选择') and label('服务器密码:') and label('已保存的连接组合') and label('加入'));dismiss()
 act('room');finish('');history_reply(history)
 credential_reply(last('credential-status'),false)
 assert(last('history-save').settings.room=='' and not last('history-save').remember_profile,'blank room draft survives restore')
 act('connect');assert(count('connect')==0)
-act('profiles');finish(1,'select');credential_reply(last('credential-status'),false);act('connect')
+act('profiles');finish(1,'select');finish(1,'select');dismiss();credential_reply(last('credential-status'),false);act('connect')
 assert(last('connect').room=='历史房间' and last('connect').password==nil and last('connect').auto_reconnect==true)
 assert(last('history-save').settings.password==nil)
 state();assert(bindings['splay-chat-enter'] and bindings['splay-chat-enter'].forced,'eligible Enter overrides user fullscreen binding only while available')
-assert(#model().items==6 and model().items[4].value=='playlist' and model().items[5].value=='message-history')
-assert(model().items[2].title:find('history.example:9001',1,true) and model().items[2].title:find('历史房间',1,true))
+assert(#model().items==5 and model().items[3].value=='playlist' and model().items[4].value=='more')
+assert(model().items[1].title:find('history.example:9001',1,true) and model().items[1].title:find('active-room',1,true) and not model().items[1].title:find('历史房间',1,true))
 for _,item in ipairs(model().items) do assert(item.value~='chat' and item.value~='members') end
-act('connection');assert(#selected.items<=7 and label('history.example : 9001'));dismiss()
+act('connection');assert(label('history.example : 9001') and label('服务器密码: 空（无密码）'));dismiss()
 act('endpoint');assert(label('服务器: history.example') and label('端口: 9001'));dismiss()
-act('room-actions');assert(label('房间成员: 0') and #selected.items<=7);dismiss()
+act('more');assert(label('房间成员: 0') and #selected.items<=8);dismiss()
 for _,name in ipairs({'user-data/mpv/console/open','user-data/mpv/context-menu/open'}) do
     prop(name,true);assert(not bindings['splay-chat-enter']);prop(name,false);assert(bindings['splay-chat-enter'])
 end
 prop('user-data/uosc/menu/type','other');assert(not bindings['splay-chat-enter']);prop('user-data/uosc/menu/type',nil)
 prop('user-data/splay-overlay',{popup_open=true});assert(not bindings['splay-chat-enter']);prop('user-data/splay-overlay',{popup_open=false})
-prop('path',nil);assert(not bindings['splay-chat-enter']);prop('path','fixture.mp4')
+prop('path',nil);assert(not bindings['splay-chat-enter']);prop('path','fixture.mp4');registered_events['file-loaded']()
 prop('idle-active',true);assert(not bindings['splay-chat-enter']);prop('idle-active',false)
 bindings['splay-chat-enter'].fn();assert(prompted.prompt:find('Esc',1,true) and not bindings['splay-chat-enter'])
 finish('四个字符');assert(count('chat')==0)
@@ -162,7 +169,7 @@ secret_reply(last('secret-input'),'opaque-memory-only',false)
 act('connect');assert(last('connect').password_token=='opaque-memory-only' and last('connect').remember_password==false)
 act('connect');assert(last('connect').reuse_password==true and last('connect').password_token==nil,'opt-out reuses only the native endpoint-bound hash')
 act('toggle-remember-password');assert(count('credential-save')==0,'saving requires re-entry in the Windows dialog')
-act('profiles');finish(1,'select');credential_reply(last('credential-status'),true);act('connect');assert(last('connect').password==nil)
+act('profiles');finish(1,'select');finish(1,'select');credential_reply(last('credential-status'),true);act('connect');assert(last('connect').password==nil)
 act('room');finish(1,'select');finish('new-room');dismiss();assert(count('room')==0)
 act('join-room');assert(last('room').room=='new-room')
 handlers['splay-command'](utils.format_json({action='connect',host='external.example',port=8999,username='external',room='external-room',tls='off',password='EXTERNAL_SECRET',custom='preserved'}))
@@ -221,13 +228,13 @@ for _,item in ipairs(commands) do
     end
 end
 commands={};handlers['splay-overlay-ready']();assert(commands[1][3]=='splay-state' and commands[2][2]=='splay_playlist' and commands[3][3]=='splay-menu-model')
-assert(utils.parse_json(commands[2][4]).local_file=='本机影片.mp4')
+assert(utils.parse_json(commands[2][4]).local_file=='fixture.mp4')
 commands={};handlers['splay-playlist-ready']();assert(commands[2][2]=='splay_playlist')
 -- Automatic migration blanks only the legacy placeholder; explicit profile selection retains it.
 start();local legacy=utils.parse_json(utils.format_json(history));legacy.last.room='DeFaUlT';legacy.profiles[1].room='Default'
 history_reply(legacy);act('toggle-enabled');act('connect');assert(count('connect')==0)
 credential_init(false)
-act('profiles');finish(1,'select');credential_reply(last('credential-status'),false);act('connect');assert(last('connect').room=='Default')
+act('profiles');finish(1,'select');finish(1,'select');credential_reply(last('credential-status'),false);act('connect');assert(last('connect').room=='Default')
 -- A late history reply preserves edited fields and restores the remaining draft fields.
 start();act('toggle-enabled');act('host');finish('typed-first.example');dismiss()
 history_reply(history)
@@ -270,15 +277,15 @@ start({host='rooms.example',port=8999,username='race',room='local-room',tls='off
 credential_init(false);act('toggle-enabled')
 state({room='local-room',members={{username='inside',room='local-room',ready=true},
     {username='outsider',room='foreign-room',ready=false},{username='unknown',room='local-room'}}})
-act('room-actions');assert(label('房间成员: 2'));dismiss()
+act('more');assert(label('房间成员: 2'));dismiss()
 act('members');assert(label('inside') and label('unknown') and label('准备状态未知') and not label('outsider'));dismiss()
-local history_title=model().items[5].title
+local history_title=history_label()
 for index,event in ipairs({
     {action='joined',username='outsider',room='foreign-room'},
     {action='file',username='outsider',room='foreign-room',file={name='unrelated.mkv'}},
     {action='room',username='outsider',room='foreign-room',previous_room='another-foreign-room'},
 }) do event.schema=1;event.type='user';event.id=800+index;handlers['splay-event'](utils.format_json(event)) end
-assert(model().items[5].title==history_title,'unrelated room events must not enter message history')
+assert(history_label()==history_title,'unrelated room events must not enter message history')
 for index,event in ipairs({
     {type='user',action='room',username='moving-out',room='foreign-room',previous_room='local-room'},
     {type='user',action='room',username='moving-in',room='local-room',previous_room='foreign-room'},
@@ -289,6 +296,46 @@ handlers['splay-event']('{"schema":1,"id":820,"type":"ready","username":"unknown
 act('message-history')
 assert(not label('outsider') and label('moving-out 切换房间: foreign-room') and label('moving-in 切换房间: local-room'))
 assert(label('race 离开房间: local-room') and label('not-ready 未准备') and label('unknown 准备状态未知') and not label('unknown 未准备'));dismiss()
+-- Connection-page saving gives explicit feedback and never snapshots a pending
+-- password operation. These fixtures use isolated history and opaque tokens.
+start();credential_init(false);history_reply(history);credential_reply(last('credential-status'),false);act('toggle-enabled')
+act('connection');assert(#selected.items==7 and label('已保存的连接组合: 1') and label('服务器密码: 空（无密码）') and label('加入') and not label('断开连接'));dismiss()
+state();act('connection');assert(#selected.items==8 and label('断开连接') and not label('自动重连:'));dismiss()
+state({connection='disconnected'})
+local save_before=count('history-save')
+act('room');finish(1,'select');finish('');act('save-profile')
+assert(count('history-save')==save_before+1 and notices[#notices]:find('请先输入或选择房间',1,true))
+act('room');finish(1,'select') -- choose the manual room entry from suggestions.
+finish('新房间')
+act('password');local saving_profile_secret=last('secret-input');save_before=count('history-save')
+act('save-profile');assert(count('history-save')==save_before and notices[#notices]:find('Windows 密码输入',1,true))
+secret_reply(saving_profile_secret,nil,false,false,'fixture credential failure')
+act('save-profile');assert(count('history-save')==save_before and notices[#notices]:find('密码存储错误',1,true))
+act('toggle-remember-password');act('save-profile')
+assert(count('history-save')==save_before+1,'password opt-out must allow saving non-secret settings despite a credential failure')
+history_reply(history,last('history-save'));assert(notices[#notices]:find('密码不随组合保存',1,true))
+act('toggle-remember-password')
+act('password');secret_reply(last('secret-input'),'opaque-profile-secret',true)
+act('save-profile');local saved_profile=last('history-save')
+assert(saved_profile.remember_profile and saved_profile.settings.room=='新房间' and saved_profile.settings.password==nil and saved_profile.password_token==nil)
+assert(notices[#notices]:find('正在保存连接组合',1,true))
+history_reply(history,saved_profile);assert(notices[#notices]:find('连接组合已保存',1,true))
+act('toggle-remember-password');act('save-profile');history_reply(history,last('history-save'))
+assert(notices[#notices]:find('已有加密密码当前不使用',1,true));act('toggle-remember-password')
+act('profiles');finish(1,'select');assert(label('填入连接信息') and label('删除此组合'));finish(3,'select')
+assert(selected.prompt:find('同服务器端口的其他组合仍可使用密码',1,true));finish(1,'select')
+assert(count('history-delete')==0 and count('credential-delete')==0,'cancel must keep the combination and endpoint password')
+start({host='waiting.example',port=8999,username='draft',room='room',history_enabled=true})
+act('toggle-enabled');save_before=count('history-save');act('save-profile')
+assert(count('history-save')==save_before and notices[#notices]:find('正在读取或保存服务器密码',1,true))
+credential_init(false);act('save-profile')
+assert(count('history-save')==save_before and notices[#notices]:find('连接记忆正在读取',1,true))
+start({remember_password=false});history_reply(history);act('toggle-enabled');save_before=count('history-save')
+act('save-profile');assert(count('history-save')==save_before+1,'password opt-out must not wait for credential initialization')
+credential_reply(last('credential-init'),false,'fixture DPAPI init failure');act('save-profile')
+assert(count('history-save')==save_before+2,'password opt-out must not depend on DPAPI availability')
+start({history_enabled=false});credential_init(false);act('toggle-enabled');act('save-profile')
+assert(count('history-save')==0 and notices[#notices]:find('连接记忆已关闭',1,true))
 -- Profile management keeps a full settings identity across live reordering.
 start();credential_init(true);history_reply(history);credential_reply(last('credential-status'),true);act('toggle-enabled')
 act('settings');assert(#selected.items<=7 and label('连接历史管理') and label('自动重连'));dismiss()
@@ -315,7 +362,7 @@ assert(clearing_all.request_id>clearing_field.request_id and count('credential-d
 local empty={schema=1,last={},profiles={},values={host={},port={},username={},room={},tls={}}}
 history_reply(empty,clearing_all)
 history_reply(named,clearing_field) -- late field-only result must not resurrect combinations.
-act('history-management');assert(label('选择组合（仅填表）: 0'));dismiss()
+act('history-management');assert(label('已保存的连接组合: 0'));dismiss()
 act('connect');assert(last('connect').room=='历史房间' and last('connect').use_saved_password==true,'clear keeps current form and credentials')
 -- Closing/reopening splay invalidates outstanding text/selection callbacks.
 act('clear-history');local stale_clear=selected
@@ -339,7 +386,7 @@ assert(count('authenticate')==0 and count('create-room')==0 and count('credentia
 act('password');old_secret=last('secret-input');act('toggle-enabled');act('toggle-enabled')
 secret_reply(old_secret,'closed-token',true);act('connect');assert(last('connect').password_token~='closed-token')
 state({connection='error',error='retry failure',reconnect={enabled=true,pending=true,attempt=2,remaining=4}})
-act('connection');assert(#selected.items<=7 and label('4 秒 · 第 2/5 次') and label('取消重连'));dismiss()
+act('connection');assert(label('4 秒 · 第 2/5 次') and label('取消重连'));dismiss()
 act('toggle-auto-reconnect');assert(last('reconnect-disable'))
 act('toggle-auto-reconnect');assert(last('reconnect-enable'))
 act('disconnect');assert(last('disconnect'))
@@ -380,5 +427,138 @@ ordered.closed()
 act('connection');assert(label('after-close'));dismiss()
 act('username');assert(prompted.default_text=='after-close','closed dispatches exactly the submitted field edit')
 dismiss()
+-- Media enrichment: lifecycle, metadata comparisons and local-only privacy.
+local function display_state()
+    for i=#commands,1,-1 do
+        if commands[i][2]=='splay_overlay' and commands[i][3]=='splay-state' then return utils.parse_json(commands[i][4]) end
+    end
+end
+start();act('toggle-enabled')
+assert(#model().items==4 and model().items[1].value=='join-form' and model().items[2].value=='create-form' and model().items[4].title=='关闭 splay')
+assert(display_state().local_media.title=='网络媒体','network filename alone is not a reliable title')
+registered_events['start-file']()
+prop('path','D:/PRIVATE_LOCAL_DIRECTORY/Film.mkv')
+prop('filename','stale-index.m3u8');prop('media-title','影片名称: 导演剪辑版');prop('duration',500)
+assert(not display_state().local_media.loaded and display_state().local_media.title=='' and display_state().local_media.duration==nil)
+registered_events['file-loaded']()
+assert(display_state().local_media.loaded and display_state().local_media.title=='影片名称: 导演剪辑版' and display_state().local_media.duration==500)
+local media_members={
+    {username='self',room='active-room',file={name='**Hidden filename**',duration=10}},
+    {username='same',room='active-room',file={name='Film.mkv',duration=502.5}},
+    {username='longer',room='active-room',file={name='Film.mkv',duration=502.5001}},
+    {username='named',room='active-room',file={name='Other.mkv',duration=500}},
+    {username='hidden',room='active-room',file={name='**Hidden filename**',duration=500}},
+    {username='unknown',room='active-room',file={name='Film.mkv',duration=0}},
+    {username='empty',room='active-room',file={}},
+    {username='foreign',room='other-room',file={name='Film.mkv',duration=500}},
+    {username='shorter',room='active-room',file={name='Film.mkv',duration=487.7}},
+}
+state({username='self',members=media_members})
+local media=display_state().members
+assert(media[1].media.check=='self' and media[1].media.title=='影片名称: 导演剪辑版' and media[1].media.duration==500)
+assert(media[2].media.check=='metadata_match' and media[2].media.check_label=='疑似同片')
+assert(media[3].media.check=='duration_mismatch')
+assert(math.abs(media[3].media.duration_delta-2.5001)<0.000001)
+assert(media[3].media.check_detail:find('对方长 2.5001 秒',1,true) and media[3].media.check_detail:find('时长接近阈值：2.5 秒',1,true))
+assert(media[4].media.check=='name_mismatch' and media[4].media.check_label=='名称不同')
+assert(media[4].media.name_basis=='different' and media[4].media.check_detail:find('无法确定是否为同一影片',1,true))
+assert(media[5].media.check=='duration_match' and media[5].media.check_detail:find('无法确认同片',1,true))
+assert(media[5].media.duration_delta==0 and media[5].media.name_basis=='unavailable')
+assert(media[6].media.check=='unknown' and media[7].media.check=='unknown' and not media[7].media.loaded)
+assert(media[8].media.check=='unknown','foreign rooms must not receive a local-media comparison')
+assert(media[8].media.duration_delta==nil and media[9].media.duration_delta_label=='对方短 12.3 秒')
+assert(media[2].media.name_basis=='same' and media[2].media.check_detail:find('本机文件名「Film.mkv」',1,true))
+assert(media[2].media.check_detail:find('本机时长：8:20（500 秒）',1,true))
+act('members');assert(label('8:20') and label('疑似同片'));dismiss()
+act('member-details:self');assert(label('影片名称: 导演剪辑版') and label('本机时长：8:20'));dismiss()
+act('member-details:same');assert(label('2.5 秒') and label('本机文件名'));dismiss()
+act('member-details:shorter');assert(label('对方短 12.3 秒'));dismiss()
+act('member-details:absent');assert(label('已离开当前房间'));dismiss()
+prop('seekable',false);assert(display_state().members[2].media.check=='unknown' and display_state().members[2].media.duration_delta==nil);prop('seekable',true)
+for _,value in ipairs({0,-1,math.huge,0/0,'500'}) do
+    prop('duration',value);assert(display_state().local_media.duration==nil and display_state().members[2].media.check=='unknown' and display_state().members[2].media.duration_delta==nil)
+end
+prop('duration',500)
+registered_events['start-file']()
+assert(display_state().local_media.title=='' and display_state().local_media.duration==nil)
+prop('path','https://PRIVATE_REMOTE_HOST/manifest.m3u8?token=PRIVATE_TOKEN')
+prop('filename','index.m3u8')
+prop('media-title','https://PRIVATE_REMOTE_HOST/manifest.m3u8?token=PRIVATE_TOKEN')
+registered_events['file-loaded']()
+assert(display_state().local_media.title=='网络媒体')
+for _,value in ipairs({'index.m3u8','token','D:\\PRIVATE_LOCAL_DIRECTORY\\Film.mkv','Film?token=PRIVATE_TOKEN','https%3A%2F%2FPRIVATE_REMOTE_HOST%2Ftoken'}) do
+    prop('media-title',value);assert(display_state().local_media.title=='网络媒体')
+end
+local full_title='影片名称: '..string.rep('完整标题',90)
+prop('media-title',full_title);assert(display_state().local_media.title==full_title,'UI state retains the full safe title for responsive overlay truncation')
+prop('idle-active',true);assert(not display_state().local_media.loaded and display_state().local_media.duration==nil)
+prop('idle-active',false);registered_events['end-file']()
+prop('media-title','stale-title');assert(not display_state().local_media.loaded and display_state().local_media.title=='')
+local after_media=#commands
+prop('user-data/splay-overlay',{popup_open=true})
+assert(#commands==after_media,'overlay observations must not republish state in a loop')
+for _,command in ipairs(commands) do
+    if command[3]=='splay-state' then
+        assert(not command[4]:find('PRIVATE_',1,true),'display state must not expose raw paths or URL/authentication data')
+    elseif command[2]=='splay_core' then
+        assert(not command[4]:find('影片名称',1,true) and not command[4]:find('Film.mkv',1,true) and
+            not command[4]:find('PRIVATE_',1,true) and not command[4]:find('metadata_match',1,true),
+            'local title/duration comparisons must not create network commands')
+    end
+end
+-- Auto-start is an explicit local-only policy. Countdown snapshots are state,
+-- while a single started/cancelled event may enter history.
+start();assert(count('autostart')==0 and count('autostart-cancel')==0)
+act('toggle-enabled');act('toggle-autostart');assert(count('autostart')==0,'disconnected UI cannot enable auto-start')
+state({autostart={enabled=false,delay=5,pending=false,remaining=0,reason='disabled',participants=2}})
+act('autostart');assert(label('全员准备后自动开播: 关闭') and label('建议房内仅一人开启'));dismiss()
+act('toggle-autostart');assert(last('autostart').enabled==true and last('autostart').delay==5)
+state({autostart={enabled=true,delay=5,pending=true,remaining=5,reason='countdown',participants=2}})
+local function home_item(value)
+    for _,item in ipairs(model().items) do if item.value==value then return item end end
+end
+assert(home_item('autostart-cancel').subtitle=='5 秒后开播')
+local autostart_history_title=history_label()
+for remaining=4,1,-1 do
+    state({autostart={enabled=true,delay=5,pending=true,remaining=remaining,reason='countdown',participants=2}})
+    assert(home_item('autostart-cancel').subtitle==remaining..' 秒后开播')
+    assert(history_label()==autostart_history_title,'countdown ticks must not enter history')
+end
+act('autostart-cancel');assert(count('autostart-cancel')==1)
+state({autostart={enabled=true,delay=5,pending=false,remaining=0,reason='waiting-reset',participants=2}})
+assert(not home_item('autostart-cancel'))
+act('autostart');assert(label('重新开启自动开播') and label('等待重新准备或重新开启'));dismiss()
+act('restart-autostart');assert(last('autostart').enabled==true and last('autostart').delay==5)
+act('toggle-autostart');assert(last('autostart').enabled==false)
+handlers['splay-event']('{"schema":1,"id":1601,"type":"autostart","action":"cancelled","reason":"waiting-ready"}')
+handlers['splay-event']('{"schema":1,"id":1601,"type":"autostart","action":"cancelled","reason":"waiting-ready"}')
+handlers['splay-event']('{"schema":1,"id":1602,"type":"autostart","action":"started"}')
+act('message-history');assert(label('自动开播已取消：等待全员准备') and label('倒计时结束，已自动开播'));dismiss()
+state({connection='disconnected',autostart={enabled=false,pending=false,reason='disconnected'}})
+assert(not home_item('autostart-cancel'))
+local autostart_commands=count('autostart');act('toggle-enabled');act('toggle-enabled')
+assert(count('autostart')==autostart_commands,'re-enabling splay must not persist or restore auto-start')
+for _,command in ipairs(core()) do
+    if command.action=='history-save' then assert(command.settings.autostart==nil and command.settings.autostart_enabled==nil) end
+end
+-- Joining and ordinary creation share one draft form and always need an
+-- explicit final click. Ordinary creation never invokes controlled-room auth.
+start({room='old-room',history_enabled=false});credential_init(false);act('toggle-enabled')
+assert(#model().items==4 and model().items[1].title=='加入房间' and model().items[2].title=='创建房间')
+act('join-form');assert(selected.prompt:find('加入房间',1,true) and label('房间: old-room') and count('connect')==0);dismiss()
+act('create-form');assert(prompted.prompt:find('新普通房间名称',1,true) and prompted.default_text=='' and count('connect')==0)
+finish('fresh-room')
+assert(selected.prompt:find('创建房间',1,true) and label('创建并进入') and label('房间: fresh-room') and count('connect')==0)
+act('connect');assert(last('connect').room=='fresh-room' and count('create-room')==0 and count('secret-input')==0)
+act('create-form');dismiss()
+local explicit_connects=count('connect')
+act('connect');assert(count('connect')==explicit_connects and prompted.default_text=='','cancelled creation cannot reuse an old room silently')
+finish('   ');act('connect');assert(count('connect')==explicit_connects)
+dismiss();act('join-form');assert(label('加入') and not label('创建并进入'));dismiss()
+state({host='active.example',port=8999,room='actual-room'})
+act('room');finish('draft-room');dismiss()
+assert(model().items[1].popup_title=='active.example:8999' and model().items[1].subtitle=='actual-room','connected home describes the active session instead of edited draft fields')
+act('more');assert(label('房间成员:') and label('消息记录:') and label('全员准备后自动开播') and label('加入其他房间') and label('创建房间') and label('关闭 splay'));dismiss()
+act('room-actions');assert(label('认证房间操作员') and label('创建受控房间') and not label('全员准备后自动开播'));dismiss()
 print('UI_FORMS_PASSED default off, compact pages, endpoint editing, encrypted credential commands and stale reply isolation, playlist state handoff, bounded all-event history and deduplication, conditional Enter/history shortcuts, modal generations, cancellation, overlay replay')
 real_mp.commandv('quit')

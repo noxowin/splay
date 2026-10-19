@@ -33,6 +33,8 @@ local has_private_password=false
 local secret_serial, secret_request = 0, nil
 local input_generation=0
 local native_menu_page=nil
+local detail_member_name=nil
+local connection_intent,create_name_confirmed='join',false
 local active_input_session=nil
 local show, act, publish, update_enter, chat, notice, connect, init_credentials
 local function room_valid(room) return type(room)=='string' and room:find('%S')~=nil end
@@ -43,6 +45,121 @@ local function plain(v,limit)
     local finish=limit
     while finish>0 and text:byte(finish+1)>=128 and text:byte(finish+1)<=191 do finish=finish-1 end
     return text:sub(1,finish)..'…'
+end
+-- UI enrichment stays in this Lua client. Never pass these values to send().
+local media_path=mp.get_property_native('path')
+local media_loading=false
+local function valid_duration(value)
+    return type(value)=='number' and value==value and value>0 and value<math.huge and value or nil
+end
+local function media_name(value)
+    if type(value)~='string' or #value>8192 then return nil end
+    value=value:match('^%s*(.-)%s*$')
+    if value=='' then return nil end
+    local inspected=value:lower()
+    -- Inspect escaped input as well; an encoded URL/path is still private data.
+    for _=1,2 do inspected=inspected:gsub('%%(%x%x)',function(hex) return string.char(tonumber(hex,16)) end):lower() end
+    if inspected:find('[%c/\\]') or inspected:find('^%a:') or inspected:find('^https?:') or
+        inspected:find('^ftp:') or inspected:find('^rtsp:') or inspected:find('^data:') or inspected:find('^www%.') or
+        inspected:find('[?#=]') or inspected:find('%*%*hidden') then return nil end
+    local stem=inspected:gsub('%.[%w]+$','')
+    if stem=='index' or stem=='master' or stem=='manifest' or stem=='playlist' or stem=='token' or
+        stem=='stream' or stem=='live' or stem=='media' or stem=='video' or stem=='play' or
+        inspected:find('%.m3u8$') or inspected:find('%.mpd$') or inspected:find('%.ism[l]?$') or
+        inspected:find('%.f4m$') then return nil end
+    return plain(value,2048),value:lower()
+end
+local function local_media()
+    local path=mp.get_property_native('path')
+    if media_loading or type(path)~='string' or path=='' or path~=media_path or
+        mp.get_property_native('idle-active')==true then return {loaded=false,title=''} end
+    local network=path:match('^%a[%w+.-]*:')~=nil and not path:match('^%a:[/\\]') and not path:lower():match('^file://')
+    local basename,name_key
+    if not network then
+        -- Only a local basename is an acceptable fallback. Never derive a title
+        -- from a network URL or its request/authorization parameters.
+        basename,name_key=media_name(path:match('([^/\\]+)$'))
+        if not basename then basename,name_key=media_name(mp.get_property_native('filename')) end
+    end
+    local title,title_key=media_name(mp.get_property_native('media-title'))
+    return {loaded=true,title=title or basename or (network and '网络媒体' or '本机媒体'),
+        duration=valid_duration(mp.get_property_native('duration'))},name_key or title_key,
+        basename or title,name_key and '本机文件名' or title_key and '本机媒体标题' or '名称未提供'
+end
+local function duration_label(value)
+    if not value then return '时长未知' end
+    local seconds=math.floor(value+0.5)
+    if seconds>=3600 then return string.format('%.0f:%02d:%02d',math.floor(seconds/3600),math.floor(seconds/60)%60,seconds%60) end
+    return string.format('%d:%02d',math.floor(seconds/60),seconds%60)
+end
+local function seconds_label(value)
+    if math.abs(value)>=1e9 then return string.format('%.6g',value) end
+    return (string.format('%.6f',value):gsub('0+$',''):gsub('%.$',''))
+end
+local function delta_label(delta)
+    if delta==0 then return '双方时长相同' end
+    local amount=seconds_label(math.abs(delta))
+    if amount=='0' then amount='不足 0.000001' end
+    return '对方'..(delta>0 and '长 ' or '短 ')..amount..' 秒'
+end
+local function enrich_media()
+    local own,own_name,own_comparison_name,own_name_source=local_media()
+    state.local_media=own
+    -- Keep the old local display field safe for existing consumers.
+    state.local_file=own.title
+    for _,member in ipairs(state.members or {}) do
+        if type(member)=='table' then
+            local self=type(state.username)=='string' and member.username==state.username
+            local media,name,comparison_name
+            if self then media={loaded=own.loaded,title=own.title,duration=own.duration}
+            else
+                local file=type(member.file)=='table' and member.file or {}
+                local title
+                title,name=media_name(file.name)
+                comparison_name=title
+                media={loaded=next(file)~=nil,title=title or (next(file)~=nil and '名称未提供' or ''),duration=valid_duration(file.duration)}
+            end
+            local check,label,detail='unknown','无法比对','需要双方已载入媒体并提供有效时长；隐藏名称或直播无法确认同片。'
+            media.local_duration=own.duration
+            media.name_basis='unavailable'
+            local comparable=not self and type(state.room)=='string' and member.room==state.room and own.loaded and media.loaded
+            if comparable then
+                if own_name and name then
+                    media.name_basis=own_name==name and 'same' or 'different'
+                    media.name_detail='名称依据：'..own_name_source..'「'..own_comparison_name..'」；对方公开名称「'..comparison_name..'」。'
+                else media.name_detail='名称依据：一方名称隐藏或缺少可信名称，未核对文件内容。' end
+                if own.duration and media.duration and mp.get_property_native('seekable')~=false then
+                    local delta=media.duration-own.duration
+                    if delta==delta and delta>-math.huge and delta<math.huge then
+                        media.duration_delta=delta
+                        media.duration_delta_label=delta_label(delta)
+                    end
+                end
+            end
+            if self then check,label,detail='self','本机','本机媒体信息仅用于本地显示与比对。'
+            elseif type(state.room)~='string' or member.room~=state.room then detail='仅比对当前房间成员。'
+            elseif not own.loaded or not media.loaded then detail='一方尚未载入媒体，暂不比对。'
+            elseif not own.duration or not media.duration or mp.get_property_native('seekable')==false then
+                detail='时长未知或媒体不可跳转（可能为直播），暂不比对。'
+            elseif media.duration_delta and math.abs(media.duration_delta)>2.5 then
+                check,label,detail='duration_mismatch','时长不同','双方时长相差超过 2.5 秒；可能是不同版本或媒体。'
+            elseif own_name and name and own_name~=name then
+                check,label,detail='name_mismatch','名称不同','双方名称不同，时长接近；仅凭名称无法确定是否为同一影片。'
+            elseif own_name and name then
+                check,label,detail='metadata_match','疑似同片','名称相同且时长相差不超过 2.5 秒；未核对文件内容，无法确认同片。'
+            else
+                check,label,detail='duration_match','时长一致','时长相差不超过 2.5 秒；名称隐藏或未知，仅凭时长无法确认同片。'
+            end
+            if not self then
+                detail='本机时长：'..(own.duration and duration_label(own.duration)..'（'..seconds_label(own.duration)..' 秒）' or '未知')..
+                    '；对方时长：'..(media.duration and duration_label(media.duration)..'（'..seconds_label(media.duration)..' 秒）' or '未知')..'。\n'..
+                    (media.duration_delta_label and media.duration_delta_label..'；' or '')..'时长接近阈值：2.5 秒。\n'..
+                    (media.name_detail or '名称依据：当前无法比对。')..'\n'..detail
+            end
+            media.check,media.check_label,media.check_detail=check,label,detail
+            member.media=media
+        end
+    end
 end
 local function parse_event(json)
     -- mpv strings end at NUL; preserve following text with a visible marker.
@@ -117,7 +234,7 @@ end
 local function report(text,seconds,category)
     mp.osd_message(text,seconds or 3);notice(text,category or 'notice')
 end
-local function save(remember,freeze)
+local function save(remember,freeze,message)
     if not cfg.history_enabled then return end
     if remember and not room_valid(cfg.room) then report('请先输入或选择房间',3);return end
     local settings={}
@@ -128,7 +245,26 @@ local function save(remember,freeze)
         local edited={}
         for _,key in ipairs(fields) do edited[key]=touched[key]==true end
         pending_saves[#pending_saves+1]={command=command,edited=edited,freeze=freeze==true}
-    else history_send(command) end
+    else history_send(command,message) end
+end
+local function save_profile()
+    if not cfg.history_enabled then report('连接记忆已关闭；未保存连接组合',4);return end
+    if not room_valid(cfg.room) then report('请先输入或选择房间，再保存连接组合',4);return end
+    if secret_request then report('请先完成或取消 Windows 密码输入，再保存连接组合',4);return end
+    if cfg.remember_password then
+        if credential_error then report('密码存储错误；未保存连接组合: '..plain(credential_error),5,'error');return end
+        if not credential_initialized or not credential_ready or credential_pending or credential_request then
+            credential_dispatch()
+            report('正在读取或保存服务器密码；请等待完成后再次保存连接组合',4);return
+        end
+    end
+    if not history_loaded then report('连接记忆正在读取；请稍后再次保存连接组合',4);return end
+    local password_note=not cfg.remember_password and
+        (credential_saved and '已有加密密码当前不使用；密码不随组合保存' or '密码不随组合保存') or
+        credential_saved and '密码按服务器和端口单独加密保管' or
+        ((password_token or has_private_password) and '仅本次密码不会随组合保存' or '当前无已保存的服务器密码')
+    save(true,true,'连接组合已保存；'..password_note)
+    report('正在保存连接组合…',2)
 end
 local function edit(key,value)
     local changed_endpoint=(key=='host' or key=='port') and cfg[key]~=value
@@ -139,13 +275,17 @@ local function edit(key,value)
 end
 connect=function()
     if not enabled then return end
+    if connection_intent=='create' and not create_name_confirmed then
+        report('请先填写新房间名称，再点击「创建并进入」',3)
+        mp.add_timeout(0,function() act('room') end);return
+    end
     if secret_request then
         if secret_request.purpose=='server' then credential_connect_waiting=true;report('完成 Windows 密码输入后连接',3)
         else report('请先完成或取消 Windows 密码输入',3) end
         return
     end
     if not room_valid(cfg.room) then
-        report('请先输入或选择房间，然后点击连接',3)
+        report('请先输入或选择房间，再点击「加入」',3)
         mp.add_timeout(0,function() act('room') end);return
     end
     if cfg.remember_password then
@@ -271,12 +411,33 @@ local function reconnect_label()
     return '自动重连: '..(cfg.auto_reconnect and '开启' or '关闭')
 end
 local function warning_label() return plain(warning_labels[state.warning] or state.warning) end
+local function password_label()
+    if secret_request and secret_request.purpose=='server' then return 'Windows 输入中' end
+    if credential_error then return '存储错误（请重新输入或检查密码设置）' end
+    if not credential_initialized or not credential_ready or credential_pending or credential_request then return '读取 / 保存中' end
+    if credential_saved then return cfg.remember_password and '已加密保存' or '已保存（当前不使用）' end
+    return (has_private_password or password_token) and '仅本次' or '空（无密码）'
+end
 local function current_members()
     local members={}
     for _,member in ipairs(state.members or {}) do
         if type(member)=='table' and type(state.room)=='string' and member.room==state.room then members[#members+1]=member end
     end
     return members
+end
+local autostart_reasons={
+    disabled='已关闭', ['waiting-ready']='等待全员准备', ['waiting-members']='至少需要两位同房成员',
+    ['waiting-media']='等待媒体就绪（暂停、1x、可跳转且无缓冲）', ['no-permission']='需要本机已认证为房间操作员',
+    ['waiting-reset']='等待重新准备或重新开启', countdown='全员已准备，正在倒计时',
+    started='已自动开播', unsupported='服务器未支持准备状态', ['waiting-snapshot']='等待完整成员列表',
+    disconnected='未连接房间',
+}
+local function autostart_state() return type(state.autostart)=='table' and state.autostart or {} end
+local function autostart_countdown()
+    local value=autostart_state()
+    if value.enabled~=true or value.pending~=true or state.connection~='connected' then return nil end
+    local seconds=value.remaining
+    return type(seconds)=='number' and seconds==seconds and seconds>=0 and seconds<=30 and math.ceil(seconds) or nil
 end
 local function member_latency(member)
     if not cfg.latency_enabled then return '' end
@@ -288,26 +449,50 @@ local function member_latency(member)
         (own or value.reported==true) then return ' | '..label..': '..math.floor(value.rtt_ms+0.5)..' ms' end
     return ' | '..label..': '..(own and '测量中' or '未上报')
 end
+local function add_detail_rows(result,text)
+    -- Both native console and uosc use a fixed height per menu item. Keep
+    -- detail paragraphs in separate rows so no multiline title is clipped.
+    for paragraph in (text..'\n'):gmatch('(.-)\n') do
+        local row,units={},0
+        for cp in paragraph:gmatch('[%z\1-\127\194-\244][\128-\191]*') do
+            local advance=cp:byte()<128 and .55 or 1
+            if units+advance>28 and #row>0 then
+                result[#result+1]={title=table.concat(row),value='noop',selectable=false}
+                row,units={},0
+            end
+            row[#row+1]=cp;units=units+advance
+        end
+        if #row>0 then result[#result+1]={title=table.concat(row),value='noop',selectable=false} end
+    end
+end
 local function rows(which)
     which=which or page
-    local toggle={title='splay: '..(enabled and '开启（点击关闭）' or '关闭（点击开启）'),value='toggle-enabled'}
+    local toggle={title=enabled and '关闭 splay' or '启用 splay',value='toggle-enabled'}
     if not enabled then return {toggle} end
-    if which=='connection' then return {
+    if which=='connection' then
+        local result={
         {title='‹ 返回',value='home'},
         {title='服务器: '..plain(cfg.host)..' : '..plain(cfg.port),value='endpoint'},
+        {title='房间: '..(connection_intent=='create' and not create_name_confirmed and '请填写新房间名称' or room_valid(cfg.room) and plain(cfg.room) or '请先输入或选择'),value='room'},
+        {title='服务器密码: '..password_label(),value='password'},
         {title='昵称: '..plain(cfg.username),value='username'},
-        {title='房间: '..(room_valid(cfg.room) and plain(cfg.room) or '请先输入或选择'),value='room'},
-        {title=state.connection=='connected' and '使用填写值重新连接' or '连接',value='connect'},
-        {title=(state.connection=='connected' or state.connection=='connecting' or (state.reconnect and state.reconnect.pending)) and '取消重连 / 断开连接' or '历史连接组合（仅填表）: '..#(history.profiles or {}),value=(state.connection=='connected' or state.connection=='connecting' or (state.reconnect and state.reconnect.pending)) and 'disconnect' or 'profiles'},
-        {title=reconnect_label(),value='noop',selectable=false},
-    } end
+        {title='已保存的连接组合: '..#(history.profiles or {}),value='profiles'},
+        {title=connection_intent=='create' and '创建并进入' or '加入',value='connect'},
+        }
+        local reconnect_pending=state.reconnect and state.reconnect.pending
+        if state.connection=='connected' or state.connection=='connecting' or reconnect_pending then
+            result[#result+1]={title='取消重连 / 断开连接',value='disconnect'}
+        end
+        if reconnect_pending then result[#result+1]={title=reconnect_label(),value='noop',selectable=false} end
+        return result
+    end
     if which=='settings' then return {
-        {title='‹ 返回',value='home'},
+        {title='‹ 返回',value=state.connection=='connected' and 'more' or 'home'},
         {title='TLS: '..plain(cfg.tls),value='tls'},
-        {title='服务器密码: '..(credential_saved and (cfg.remember_password and '已加密保存' or '已保存（当前不使用）') or ((has_private_password or password_token) and '仅本次' or '空')),value='password-settings'},
+        {title='密码记忆与删除',value='password-settings'},
         {title='显示设置',value='display'},
         {title='连接历史管理: '..#(history.profiles or {}),value='history-management'},
-        {title='房间操作',value='room-actions'},
+        {title='高级房间操作',value='room-actions'},
         {title='自动重连: '..(cfg.auto_reconnect and '开启' or '关闭'),value='toggle-auto-reconnect'},
     } end
     if which=='endpoint' then return {
@@ -317,14 +502,14 @@ local function rows(which)
     } end
     if which=='password-settings' then return {
         {title='‹ 返回设置',value='settings'},
-        {title='密码: '..(credential_saved and (cfg.remember_password and '已加密保存' or '已保存（当前不使用）') or ((has_private_password or password_token) and '仅本次' or '空')),value='password'},
+        {title='密码: '..password_label(),value='password'},
         {title='记住并使用已保存密码: '..(cfg.remember_password and '是' or '否'),value='toggle-remember-password'},
         {title='清除本次输入并删除已保存密码',value='clear-password'},
     } end
     if which=='history-management' then return {
         {title='‹ 返回设置',value='settings'},
         {title='保存当前连接组合',value='save-profile'},
-        {title='选择组合（仅填表）: '..#(history.profiles or {}),value='profiles'},
+        {title='已保存的连接组合: '..#(history.profiles or {}),value='profiles'},
         {title='命名 / 重命名 / 删除组合',value='manage-profiles'},
         {title='清空指定字段建议',value='clear-history-field'},
         {title='清空全部非密码历史…',value='clear-history'},
@@ -335,38 +520,88 @@ local function rows(which)
         {title='显示 / 隐藏鼠标按钮',value='toggle-buttons'},
         {title='延迟显示与共享: '..(cfg.latency_enabled and '开启' or '关闭'),value='toggle-latency'},
     } end
+    if which=='autostart' then
+        local auto=autostart_state()
+        local result={
+        {title='‹ 返回',value='more'},
+        {title='全员准备后自动开播: '..(auto.enabled==true and '开启（5 秒）' or '关闭'),value='toggle-autostart'},
+        {title='本机等待 5 秒；建议房内仅一人开启',value='noop',selectable=false},
+        }
+        if auto.enabled==true then
+            result[#result+1]={title=autostart_reasons[auto.reason] or '等待准备状态',value='noop',selectable=false}
+            if auto.reason=='waiting-reset' or auto.reason=='started' then
+                result[#result+1]={title='重新开启自动开播（5 秒）',value='restart-autostart'}
+            end
+        end
+        local countdown=autostart_countdown()
+        if countdown then result[#result+1]={title='取消自动开播（'..countdown..' 秒）',value='autostart-cancel'} end
+        return result
+    end
     if which=='room-actions' then return {
-        {title='‹ 返回',value='home'},
-        {title='填写 / 选择房间',value='room'},
-        {title='切换到填写房间',value='join-room'},
+        {title='‹ 返回',value='settings'},
         {title='认证房间操作员',value='authenticate'},
-        {title='创建受控房间',value='create-room'},
-        {title='房间成员: '..#current_members(),value='members'},
+        {title='创建受控房间…',value='create-room'},
+        {title='受控房间需要单独的操作员密码',value='noop',selectable=false},
     } end
+    if which=='more' then return {
+        {title='‹ 返回',value='home'},
+        {title='房间成员: '..#current_members(),value='members'},
+        {title='消息记录: '..#messages,popup_title='消息记录',subtitle='Shift+h · '..#messages..' 条',value='message-history'},
+        {title='全员准备后自动开播: '..(autostart_state().enabled==true and '开启' or '关闭'),value='autostart'},
+        {title='加入其他房间',value='join-form'},
+        {title='创建房间',value='create-form'},
+        {title='设置',value='settings'},
+        toggle,
+    } end
+    if which=='member-details' then
+        local result={{title='‹ 返回房间成员',value='members'}}
+        local selected
+        for _,member in ipairs(current_members()) do if member.username==detail_member_name then selected=member;break end end
+        if not selected then result[#result+1]={title='该成员已离开当前房间',value='noop',selectable=false};return result end
+        local media=selected.media or {}
+        add_detail_rows(result,'成员：'..plain(selected.username)..' · '..plain(selected.room))
+        add_detail_rows(result,'片名：'..(media.loaded and media.title or '未载入媒体'))
+        add_detail_rows(result,'检查：'..(media.check_label or '无法比对'))
+        if media.check=='self' then add_detail_rows(result,'本机时长：'..duration_label(media.duration)..(media.duration and '（'..seconds_label(media.duration)..' 秒）' or '')) end
+        add_detail_rows(result,media.check_detail or '媒体信息未知。')
+        return result
+    end
     if which=='members' then
-        local result={{title='‹ 返回房间操作',value='room-actions'}}
+        local result={{title='‹ 返回',value='more'}}
         for _,member in ipairs(current_members()) do
+            local media=member.media or {loaded=false,title='',check_label='无法比对',check_detail='媒体信息未知。'}
             result[#result+1]={title=plain(member.username)..' | '..plain(member.room)..' | '..
                 (member.ready==true and '已准备' or (member.ready==false and '未准备' or '准备状态未知'))..
-                (member.is_controller and ' | 操作员' or '')..member_latency(member),value='noop',selectable=false}
+                (member.is_controller and ' | 操作员' or '')..member_latency(member)..' | '..duration_label(media.duration)..' · '..media.check_label,
+                hint='查看媒体与检查详情',value='member-details:'..tostring(member.username or '')}
         end
         if #result==1 then result[2]={title='暂无成员',value='noop',selectable=false} end
         if cfg.latency_enabled then result[#result+1]={title='他人需开启 splay 分享；官方客户端未上报延迟',value='noop',selectable=false} end
         return result
     end
-    local result={toggle}
-    result[#result+1]={title='服务器: '..plain(cfg.host)..':'..plain(cfg.port)..' · 房间: '..(room_valid(cfg.room) and plain(cfg.room) or '未填写'),value='connection'}
-    if state.connection=='connected' then
-        result[#result+1]={title='准备: '..(state.ready==true and '是' or '否'),value='ready'}
-    else result[#result+1]={title='连接',value='connect'} end
+    if state.connection~='connected' then
+        local result={{title='加入房间',value='join-form'},{title='创建房间',value='create-form'}}
+        if state.connection=='connecting' or (state.reconnect and state.reconnect.pending) then
+            result[#result+1]={title='取消连接 / 重连',subtitle=reconnect_label(),value='disconnect'}
+        end
+        result[#result+1]={title='设置',value='settings'}
+        result[#result+1]=toggle
+        return result
+    end
+    local endpoint=type(state.host)=='string' and state.host~='' and plain(state.host)..':'..plain(state.port) or '服务器未知'
+    local room=room_valid(state.room) and plain(state.room) or '房间未知'
+    local result={{title=endpoint..' · '..room,popup_title=endpoint,subtitle=room,value='connection'},
+        {title=state.ready==true and '已准备' or '未准备',value='ready'}}
+    local countdown=autostart_countdown()
+    if countdown then result[#result+1]={title='取消自动开播（'..countdown..' 秒）',popup_title='取消自动开播',subtitle=countdown..' 秒后开播',value='autostart-cancel'} end
     result[#result+1]={title='共享播放列表',value='playlist'}
-    result[#result+1]={title='消息记录（Shift+h）: '..#messages,value='message-history'}
-    result[#result+1]={title='设置',value='settings'}
+    result[#result+1]={title='更多',value='more'}
+    result[#result+1]={title='断开连接',value='disconnect'}
     return result
 end
-local page_titles={home='splay',connection='连接设置',endpoint='服务器与端口',settings='设置',display='显示设置',members='房间成员',['room-actions']='房间操作',['password-settings']='服务器密码',['history-management']='连接历史管理'}
+local page_titles={home='splay',connection='加入房间',endpoint='服务器与端口',settings='设置',display='显示设置',members='房间成员',more='更多',autostart='自动开播',['member-details']='成员媒体详情',['room-actions']='高级房间操作',['password-settings']='服务器密码',['history-management']='连接历史管理'}
 local function title(which)
-    return (page_titles[which] or 'splay')..' | '..(enabled and connection_label() or '已关闭')
+    return (which=='connection' and connection_intent=='create' and '创建房间' or page_titles[which] or 'splay')..' | '..(enabled and connection_label() or '已关闭')
 end
 local function menu()
     return {type='splay',title=title(page),footnote=enabled and (plain(state.error)~='' and plain(state.error) or warning_label()) or '',
@@ -381,8 +616,7 @@ publish=function()
     elseif not enabled and history_bound then
         mp.remove_key_binding('splay-message-history');history_bound=false
     end
-    -- Display local filename only; never send this enriched UI state to the core.
-    state.local_file=plain(mp.get_property_native('filename') or mp.get_property_native('media-title') or '')
+    enrich_media()
     overlay('splay-state',utils.format_json(state))
     mp.commandv('script-message-to','splay_playlist','splay-state',utils.format_json(state))
     overlay('splay-menu-model',utils.format_json({title=title('home'),items=rows('home'),enabled=enabled}))
@@ -496,9 +730,11 @@ end
 local function fill_profile(profile)
     cancel_secret();password_token=nil;has_private_password=false
     credential_reset()
+    connection_intent,create_name_confirmed='join',false
     for _,key in ipairs(fields) do cfg[key]=profile[key];touched[key]=true end
     credential_status()
-    save(false);publish();report('历史已填入；点击连接或切换房间才应用',3)
+    save(false);page='connection';publish();report('连接组合已填入；点击「加入」才连接',4)
+    mp.add_timeout(0,function() if enabled then show(nil,'connection') end end)
 end
 local function choose_profile(title,callback)
     local snapshot,labels={},{}
@@ -510,7 +746,7 @@ local function choose_profile(title,callback)
     select(title,labels,function(i) if snapshot[i] then callback(snapshot[i]) end end)
 end
 local function manage_profile(profile)
-    select(profile_label(profile),{'填入连接表单','命名 / 重命名','删除此组合…'},function(i)
+    select(profile_label(profile),{'填入连接信息','命名 / 重命名','删除此组合…'},function(i)
         if i==1 then fill_profile(profile)
         elseif i==2 then
             prompt('组合名称',profile.name or '',function(name)
@@ -518,19 +754,23 @@ local function manage_profile(profile)
                 history_send({action='history-rename',settings=profile_settings(profile),name=name},'组合名称已保存')
             end)
         elseif i==3 then
-            select('删除此组合及匹配的上次填写；字段建议、当前连接和密码保留',{'取消','确认删除: '..profile_label(profile)},function(choice)
+            select('删除此组合及匹配的上次填写；字段建议、当前连接和密码保留（同服务器端口的其他组合仍可使用密码）',{'取消','确认删除: '..profile_label(profile)},function(choice)
                 if choice==2 then history_send({action='history-delete',settings=profile_settings(profile)},'连接组合已删除') end
             end)
         end
     end)
 end
 act=function(action)
+    if type(action)=='string' and action:sub(1,15)=='member-details:' then
+        detail_member_name=action:sub(16);show(nil,'member-details');return
+    end
     if action=='toggle-enabled' then
         enabled=not enabled
         ui_epoch=ui_epoch+1
         chat_generation=chat_generation+1
         if enabled then send({action='latency',enabled=cfg.latency_enabled});send({action='status'})
         else
+            connection_intent,create_name_confirmed='join',false
             input_generation=input_generation+1
             cancel_secret();password_token=nil;pending_saves={}
             credential_connect_waiting=false
@@ -541,12 +781,18 @@ act=function(action)
         end
         page='home';publish();return
     end
-    if action=='home' or action=='connection' or action=='endpoint' or action=='members' or action=='settings' or action=='display' or action=='room-actions' or action=='password-settings' or action=='history-management' then
+    if action=='home' or action=='connection' or action=='endpoint' or action=='members' or action=='settings' or action=='display' or action=='room-actions' or action=='more' or action=='autostart' or action=='password-settings' or action=='history-management' then
         show(nil,action);return
     end
     if not enabled then return end
     overlay('splay-menu-close')
     if action=='refresh' then show(nil,page)
+    elseif action=='join-form' then connection_intent,create_name_confirmed='join',false;show(nil,'connection');return
+    elseif action=='create-form' then
+        connection_intent,create_name_confirmed='create',false;page='connection'
+        prompt('新普通房间名称','',function(value) create_name_confirmed=room_valid(value);edit('room',value) end)
+    elseif action=='room' and connection_intent=='create' and page=='connection' then
+        prompt('新普通房间名称',create_name_confirmed and cfg.room or '',function(value) create_name_confirmed=room_valid(value);edit('room',value) end)
     elseif action=='connect' then connect()
     elseif action=='disconnect' then cancel_secret();credential_connect_waiting=false;chat_generation=chat_generation+1;send({action='disconnect'})
     elseif action=='toggle-auto-reconnect' then
@@ -560,6 +806,12 @@ act=function(action)
         elseif not room_valid(cfg.room) then report('请先输入或选择房间',3)
         else chat_generation=chat_generation+1;send({action='room',room=cfg.room});save(true) end
     elseif action=='ready' then if state.connection=='connected' then send({action='ready',ready=not state.ready}) end
+    elseif action=='toggle-autostart' or action=='restart-autostart' then
+        local wanted=action=='restart-autostart' or autostart_state().enabled~=true
+        if wanted and state.connection~='connected' then report('连接房间后才能开启自动开播',3);return end
+        send({action='autostart',enabled=wanted,delay=5})
+    elseif action=='autostart-cancel' then
+        if autostart_countdown() then send({action='autostart-cancel'}) end
     elseif action=='clear-password' then
         cancel_secret();send({action='password-clear'});credential_change('credential-delete')
     elseif action=='toggle-remember-password' then
@@ -571,9 +823,9 @@ act=function(action)
         end
     elseif action=='playlist' then
         close_menu();mp.commandv('script-message-to','splay_playlist','splay-playlist-open',current_ui)
-    elseif action=='save-profile' then save(true)
+    elseif action=='save-profile' then save_profile()
     elseif action=='profiles' then
-        choose_profile('选择历史连接组合（仅填表）',fill_profile)
+        choose_profile('已保存的连接组合',manage_profile)
     elseif action=='manage-profiles' then
         choose_profile('管理连接组合',manage_profile)
     elseif action=='clear-history-field' then
@@ -661,6 +913,7 @@ mp.register_script_message('splay-state',function(json)
     if type(json)~='string' or #json>262144 then return end
     local value=utils.parse_json(json)
     if type(value)~='table' or value.schema~=1 or type(value.members)~='table' then return end
+    if value.connection=='connected' and state.connection~='connected' then connection_intent,create_name_confirmed='join',false end
     if state.connection~=value.connection or state.room~=value.room or state.username~=value.username then chat_generation=chat_generation+1 end
     if enabled then
         if value.warning and value.warning~='' and value.warning~=state.warning then notice(warning_labels[value.warning] or value.warning,'warning') end
@@ -710,6 +963,13 @@ local function event_text(value)
     end
     if value.type=='room' then return '切换房间: '..plain(value.room) end
     if value.type=='ready' then return user..(value.ready==true and ' 已准备' or (value.ready==false and ' 未准备' or ' 准备状态未知')) end
+    if value.type=='autostart' then
+        if value.action=='started' then return '全员准备倒计时结束，已自动开播' end
+        if value.action=='cancelled' then
+            local reason=autostart_reasons[value.reason]
+            return '自动开播已取消'..(reason and '：'..reason or '')
+        end
+    end
     if value.type=='user' then
         if value.action=='file' then
             local file=type(value.file)=='table' and value.file.name or value.file
@@ -833,7 +1093,21 @@ end
 load_history()
 init_credentials()
 for _,delay in ipairs({0.2,0.5,1,2}) do mp.add_timeout(delay,function() load_history();init_credentials() end) end
-for _,property in ipairs({'path','idle-active','user-data/mpv/console/open','user-data/mpv/context-menu/open','user-data/uosc/menu/type','user-data/splay-overlay'}) do
+-- Media observations publish only locally. User-data observations below only
+-- update shortcut eligibility, preventing an overlay/property feedback loop.
+mp.register_event('start-file',function() media_loading=true;publish() end)
+mp.register_event('file-loaded',function() media_path=mp.get_property_native('path');media_loading=false;publish() end)
+mp.register_event('end-file',function() media_loading=true;publish() end)
+for _,property in ipairs({'path','media-title','filename','duration','idle-active','seekable'}) do
+    mp.observe_property(property,'native',function(name)
+        if name=='path' then
+            local path=mp.get_property_native('path')
+            if path~=media_path then media_path=path;media_loading=true end
+        end
+        publish()
+    end)
+end
+for _,property in ipairs({'user-data/mpv/console/open','user-data/mpv/context-menu/open','user-data/uosc/menu/type','user-data/splay-overlay'}) do
     mp.observe_property(property,'native',function() update_enter() end)
 end
 publish()

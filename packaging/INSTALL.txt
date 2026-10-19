@@ -1,6 +1,6 @@
 splay - Windows x64 development preview
 
-Full instructions: docs/install.md. Preview 5 test record: docs/validation-v5.md.
+Full instructions: docs/install.md. Preview 6 test record: docs/validation-v6.md.
 Source and downloads: https://github.com/noxowin/splay
 Use the source tag corresponding to the downloaded Release; CI builds are previews.
 
@@ -22,6 +22,9 @@ Server passwords are remembered with Windows current-user encryption; settings
 allow deletion or disabling. Password dialogs are masked and bypass mpv console.
 Do not share private configuration, splay-history.json, splay-credentials.json
 or debug logs.
+All-ready autostart is opt-in per connection, with a five-second countdown.
+Use one coordinator per room; changing room or reconnecting turns it off.
+Media comparison uses names and duration only, not content hashes.
 Shared playlists do not transmit media. Local following is off by default.
 Temporary disconnections retry up to five times after an explicit connection;
 disconnect/disable cancels retries. Optional latency display/sharing is off by

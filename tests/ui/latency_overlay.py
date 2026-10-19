@@ -4,6 +4,7 @@ This verifies visible row semantics and bounds only, not network measurement.
 The process runs minimized and never connects to a server.
 """
 import json
+import argparse
 from pathlib import Path
 import subprocess
 import sys
@@ -16,7 +17,10 @@ from interop import Job, wait_for
 
 
 def main():
-    output = ROOT / '.local/latency-overlay' / uuid.uuid4().hex[:8]
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--output', type=Path, default=ROOT / '.local/latency-overlay' / uuid.uuid4().hex[:8])
+    opts = parser.parse_args()
+    output = opts.output
     output.mkdir(parents=True)
     pipe_name = r'\\.\pipe\splay-latency-' + uuid.uuid4().hex
     job = Job()
@@ -65,7 +69,8 @@ def main():
             raise
 
     def latency_rows(snapshot):
-        return {row['username']: row['text'] for row in snapshot.get('room_rows', []) if row.get('kind') == 'latency'}
+        return {row['username']: row['text'] for row in snapshot.get('room_rows', [])
+                if row.get('kind') == 'member' and row.get('latency')}
 
     try:
         wait_for('minimized offline mpv IPC opens', connect)
@@ -74,21 +79,49 @@ def main():
         state['latency']['enabled'] = True
         snapshot = publish()
         values = latency_rows(snapshot)
-        assert '42 ms' in values['me'] and '自报' not in values['me']
-        assert '125 ms' in values['peer'] and '自报' in values['peer']
-        assert '未上报' in values['official']
+        assert '◷ 42 ms' in values['me'] and '自报' not in values['me']
+        assert '◷ 125 ms' in values['peer'] and '自报' not in values['peer']
+        assert '◷ —' in values['official']
+        assert not any(row.get('kind') == 'latency' for row in snapshot['room_rows'])
+        assert next(row['text'] for row in snapshot['room_rows'] if row['kind'] == 'room') == 'synthetic'
+        state['members'][1]['username'] = 'peer-with-a-very-long-name-' * 8
+        values = latency_rows(publish())
+        assert values[state['members'][1]['username']].endswith('◷ 125 ms'), values
+        state['members'][1]['username'] = 'peer'
         state['latency'].update(rtt_ms=None, reported=False)
         state['members'][1]['latency'].update(rtt_ms=None, stale=True)
         values = latency_rows(publish())
-        assert '测量中' in values['me'] and '已过期' in values['peer']
+        assert '◷ —' in values['me'] and '◷ —' in values['peer']
         state['members'][1]['latency'].update(rtt_ms=-10, stale=False)
-        assert '未上报' in latency_rows(publish())['peer']
+        assert '◷ —' in latency_rows(publish())['peer']
         state['latency']['enabled'] = False
         assert not latency_rows(publish())
+        state['local_media'] = {'loaded': True, 'title': '本机影片.mp4', 'duration': 120}
+        state['members'][1]['media'] = {'loaded': True, 'title': '同伴影片.mp4', 'duration': 132.3,
+                                       'check': 'duration_mismatch', 'duration_delta': 12.3}
+        state['members'][2]['media'] = {'loaded': True, 'title': '名称未提供', 'check': 'unknown'}
+        media_snapshot = publish()
+        summary = next(row['text'] for row in media_snapshot['room_rows']
+                       if row['kind'] == 'media-summary' and row['username'] == 'peer')
+        assert '时长不同' in summary and '+12.3 秒' in summary, summary
+        assert not any(row['kind'] == 'autostart' for row in media_snapshot['room_rows'])
+        state['autostart'] = {'enabled': True, 'pending': True, 'remaining': 5, 'delay': 5, 'reason': 'countdown', 'participants': 3}
+        countdown_snapshot = publish()
+        assert countdown_snapshot['autostart_remaining'] == 5
+        assert any(row['kind'] == 'autostart' and '5 秒' in row['text'] for row in countdown_snapshot['room_rows'])
+        assert countdown_snapshot['notification_count'] == media_snapshot['notification_count'] == 0
+        state['autostart'].update(remaining=2)
+        assert publish()['autostart_remaining'] == 2
+        state['autostart'].update(pending=False, reason='waiting-reset')
+        assert not any(row['kind'] == 'autostart' for row in publish()['room_rows'])
+        state['autostart'].update(enabled=False, reason='disabled')
+        assert not any(row['kind'] == 'autostart' for row in publish()['room_rows'])
         (output / 'result.json').write_text(json.dumps({'passed': True, 'network_mocked': True,
-            'numeric_rows': snapshot['room_rows'], 'default_off': True, 'unknown_and_stale': True},
+            'numeric_rows': snapshot['room_rows'], 'default_off': True, 'unknown_and_stale': True,
+            'media_delta_rows': media_snapshot['room_rows'], 'countdown_rows': countdown_snapshot['room_rows'],
+            'autostart_default_off': True, 'countdown_no_notification_spam': True},
             ensure_ascii=False, indent=2), encoding='utf-8')
-        print('PASS: actual mpv overlay default-off, self/peer labels, unknown, stale and re-disable:', output)
+        print('PASS: actual mpv overlay default-off, inline latency, name clipping, unknown, stale and re-disable:', output)
     finally:
         if pipe:
             pipe.close()

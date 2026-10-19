@@ -85,6 +85,11 @@ mp.register_script_message=function(name,fn)
 end
 '''+overlay_source,encoding='utf-8')
             (config/'scripts/splay.lua').write_text('''local input=require 'mp.input'
+local original_osd=mp.osd_message
+mp.osd_message=function(text,...)
+    mp.set_property_native('user-data/splay-test-notice',text)
+    return original_osd(text,...)
+end
 for _,kind in ipairs({'get','select'}) do
     local original=input[kind]
     input[kind]=function(request)
@@ -160,6 +165,20 @@ end
                     self.cmd('keypress', 'SPACE' if character == ' ' else character)
             self.cmd('keypress', 'ENTER')
             time.sleep(.06)
+
+        def select_row(self, needle):
+            # Drive the real mp.input selector; do not invoke its callback directly.
+            status = wait_for('real selector contains ' + needle, lambda:
+                (lambda state: state if state.get('kind') == 'select' and not state.get('closed')
+                 and any(needle in item for item in state.get('items', [])) else None)
+                (self.get('user-data/splay-test-input') or {}))
+            index = next(i for i, item in enumerate(status['items']) if needle in item)
+            for _ in status['items']:
+                self.cmd('keypress', 'UP')
+            for _ in range(index):
+                self.cmd('keypress', 'DOWN')
+            self.cmd('keypress', 'ENTER')
+            time.sleep(.1)
 
         def field(self, name, value):
             if name=='password':
@@ -264,6 +283,47 @@ end
             time.sleep(.15)
         connected(first, 'fast connect waits for encrypted password save and authenticates server A')
         assert len(entries()) == 1 and entries()[0]['port'] == port_a
+        encrypted_before = credential_file.read_bytes()
+        saved_room = room + '-saved-only'
+        first.field('room', saved_room)
+        first.action('history-management')
+        first.select_row('保存当前连接组合')
+        try:
+            wait_for('explicit save stores the new connection combination', lambda:
+                     any(profile['room'] == saved_room for profile in
+                         json.loads(history_file.read_text(encoding='utf-8'))['profiles']))
+        except AssertionError as exc:
+            raise AssertionError(str(exc) + '; notice=' + str(first.get('user-data/splay-test-notice'))) from exc
+        assert first.state()['room'] == room, 'saving a form must not change the live room'
+        first.action('profiles')
+        first.select_row(saved_room)
+        first.select_row('删除此组合')
+        first.select_row('确认删除:')
+        wait_for('real selector confirmation deletes only the chosen combination', lambda:
+                 all(profile['room'] != saved_room for profile in
+                     json.loads(history_file.read_text(encoding='utf-8'))['profiles']))
+        assert any(profile['room'] == room for profile in
+                   json.loads(history_file.read_text(encoding='utf-8'))['profiles'])
+        assert credential_file.read_bytes() == encrypted_before, 'combination deletion must retain endpoint password'
+        assert first.state()['room'] == room and first.get('path') == str(ROOT / '.local/test-media.mp4')
+        first.action('create-form')
+        wait_for('create ordinary room prompts explicitly for a new name', lambda:
+                 (first.get('user-data/splay-test-input') or {}).get('kind') == 'get' and
+                 '新普通房间' in (first.get('user-data/splay-test-input') or {}).get('prompt', ''))
+        first.submit(room + '-created')
+        assert first.state()['room'] == room, 'entering a new name alone must not connect or change rooms'
+        first.cmd('keypress', 'ESC')
+        first.action('connect')
+        wait_for('create-and-enter uses the real saved server credential', lambda:
+                 first.state().get('connection') == 'connected' and first.state().get('room') == room + '-created')
+        assert not first.full_state().get('controlled'), 'ordinary create must not create an operator-controlled room'
+        first.action('join-form')
+        first.cmd('keypress', 'ESC')
+        first.field('room', room)
+        first.action('connect')
+        wait_for('join form returns to the requested room', lambda:
+                 first.state().get('connection') == 'connected' and first.state().get('room') == room)
+        assert first.get('path') == str(ROOT / '.local/test-media.mp4')
         first.close()
         second = Player('restarted-process')
         second.action('toggle-enabled')
@@ -376,7 +436,9 @@ end
         assert all(set(profile) == {'host', 'port', 'username', 'room', 'tls'} for profile in history['profiles'])
         result = dict(result='passed', server='unmodified Syncplay 1.7.6', dpapi='current Windows user',
                       production_ui='splay.lua + Windows ES_PASSWORD dialogs; non-secret fields use mp.input', fresh_processes=3,
-                      checks=['fast save/connect', 'restart', 'room reuse', 'port isolation',
+                      checks=['fast save/connect', 'explicit combination save and real selector deletion preserves password/live room/media',
+                              'ordinary create and join forms require explicit connect and preserve media',
+                              'restart', 'room reuse', 'port isolation',
                               'fast endpoint status/connect', 'stale same-endpoint reply', 'opt out', 'delete/restart',
                               'native Escape/window-close preserves saved password','temporary password native hash reuse',
                               'native controlled-room creation/operator authentication and failure/reopen','shutdown with native dialog open',
