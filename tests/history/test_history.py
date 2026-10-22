@@ -28,7 +28,9 @@ def command(path, action, **fields):
     assert response['request_id']==payload['request_id'],response
     return response
 
-with tempfile.TemporaryDirectory(prefix='splay-history-') as folder:
+artifact_root=Path(__file__).resolve().parents[2]/'.local'
+artifact_root.mkdir(exist_ok=True)
+with tempfile.TemporaryDirectory(prefix='splay-history-',dir=artifact_root) as folder:
     path = Path(folder)/'中文目录'/'splay-history.json'
     path.parent.mkdir()
     assert call(path)['profiles'] == [] and not path.exists()
@@ -231,5 +233,60 @@ with tempfile.TemporaryDirectory(prefix='splay-history-') as folder:
                               ('history-delete',dict(settings=second)),('history-rename',dict(settings=second,name='Good'))):
             assert 'error' in command(managed,action,**fields)
             assert managed.read_bytes()==damage
+
+    # UI preferences are independent from connection history and merge under
+    # the same process lock, including when an older player is still open.
+    prefs_path=Path(folder)/'preferences.json'
+    assert call(prefs_path)['preferences']=={}
+    assert command(prefs_path,'history-preferences',preferences={'chat_mode':'danmaku'})['preferences']=={'chat_mode':'danmaku'}
+    prefs={'chat_mode':'danmaku','pause_on_join':False,'pause_on_leave':True}
+    assert command(prefs_path,'history-preferences',preferences={'pause_on_join':False,'pause_on_leave':True})['preferences']==prefs
+    assert call(prefs_path)['preferences']==prefs, 'preferences survive a fresh process'
+    stale=subprocess.Popen([str(exe),str(prefs_path),'--stream'],stdin=subprocess.PIPE,
+                           stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
+    assert json.loads(stale.stdout.readline())['preferences']==prefs
+    try:
+        command(prefs_path,'history-preferences',preferences={'chat_mode':'room'})
+        stale.stdin.write(json.dumps(dict(action='history-save',settings=profile(500),remember_profile=True))+'\n')
+        stale.stdin.flush()
+        latest=json.loads(stale.stdout.readline())
+        prefs['chat_mode']='room'
+        assert latest['preferences']==prefs and latest['profiles']==[profile(500)]
+    finally:
+        stale.stdin.close();stale.wait(timeout=8)
+        assert stale.returncode==0,stale.stderr.read()
+    # Three disjoint preference writes racing profile saves cannot drop keys.
+    parallel_path=Path(folder)/'preferences-races.json'
+    operations=[lambda:command(parallel_path,'history-preferences',preferences={'chat_mode':'danmaku'}),
+                lambda:command(parallel_path,'history-preferences',preferences={'pause_on_join':False}),
+                lambda:command(parallel_path,'history-preferences',preferences={'pause_on_leave':False})]
+    operations.extend(lambda i=i:call(parallel_path,profile(600+i)) for i in range(12))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        outcomes=list(pool.map(lambda operation:operation(),operations))
+    assert all('error' not in result for result in outcomes),outcomes
+    expected={'chat_mode':'danmaku','pause_on_join':False,'pause_on_leave':False}
+    final=call(parallel_path)
+    assert final['preferences']==expected and len(final['profiles'])==12
+    command(parallel_path,'history-clear-values',field='room')
+    assert call(parallel_path)['preferences']==expected
+    command(parallel_path,'history-clear')
+    final=call(parallel_path)
+    assert final['preferences']==expected and final['last']=={} and final['profiles']==[]
+    assert all(not value for value in final['values'].values())
+    previous=parallel_path.read_bytes()
+    for invalid in (None,[],True,{'chat_mode':'unknown'},{'chat_mode':True},
+                    {'pause_on_join':1},{'pause_on_leave':'false'},
+                    {'password':'SYNTHETIC_PREF_SECRET'},{'time_offset':12}):
+        assert 'error' in command(parallel_path,'history-preferences',preferences=invalid),invalid
+        assert parallel_path.read_bytes()==previous
+    assert command(parallel_path,'history-preferences',preferences={})['preferences']==expected
+    # Loading damaged preferences fails explicitly and never overwrites bytes.
+    for invalid in ([],{'pause_on_join':None},{'chat_mode':'unknown'},{'unknown':True}):
+        stored=dict(schema=1,last={},profiles=[],values={},preferences=invalid)
+        damaged=json.dumps(stored).encode('utf-8');parallel_path.write_bytes(damaged)
+        assert 'error' in call(parallel_path)
+        assert 'error' in command(parallel_path,'history-preferences',preferences={'chat_mode':'room'})
+        assert parallel_path.read_bytes()==damaged
 print('History: blank-room draft restart, strict completed profiles and stored values, legacy rooms, mixed draft/profile merges, Unicode paths, 30 concurrent profile merges, dedup, secrets whitelist, validation, corruption and failed write preservation passed')
 print('History management: named identities, stale-process re-read, parallel rename/delete/save merge, authoritative cleared suggestions, legacy migration, request IDs, strict input and secret isolation passed')
+print('History preferences: fresh-process persistence, stale-player save preservation, concurrent independent merges, clear preservation and invalid data protection passed')

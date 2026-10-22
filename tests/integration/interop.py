@@ -101,6 +101,7 @@ mp.add_periodic_timer(0.1, function()
     end
     local result = {position=mp.get_property_native('time-pos'),
         paused=mp.get_property_native('pause'), path=mp.get_property('path'),
+        media_title=mp.get_property('media-title'),
         duration=mp.get_property_native('duration'), state=state, event_json=events, errors=errors}
     local out = io.open(destination .. '.tmp', 'w')
     if out then
@@ -257,10 +258,109 @@ def main():
             while listing is None:
                 listing = json.loads(stream.readline()).get('List')
             metadata = listing[room]['plugin']['file']
-            assert metadata['name'] == '**Hidden filename**' and 'test_token' not in json.dumps(metadata), metadata
+            expected_name = '**Hidden filename**' if args.http else Path(args.media).name
+            assert metadata['name'] == expected_name and 'test_token' not in json.dumps(metadata), metadata
             (directory / 'server-plugin-metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
             stream.close()
-        print('PASS: server List stores hidden plugin metadata with no media URL/token', flush=True)
+        print('PASS: server List stores a public local basename or hidden URL metadata with no media URL/token', flush=True)
+        if args.http:
+            plugin.command('set', 'force-media-title', 'Public fixture programme')
+            wait_for('late public stream title updates actual server metadata',
+                     lambda: (server_file(room) or {}).get('name') == 'Public fixture programme')
+            assert plugin.read()['path'] == plugin_media and together(True, 35)
+            assert state()['ready'] is False, 'Title update changed readiness'
+            plugin.command('set', 'force-media-title', 'https://private.invalid/?token=SYNTHETIC_TITLE_SECRET')
+            wait_for('unsafe late stream title restores hidden server metadata',
+                     lambda: (server_file(room) or {}).get('name') == '**Hidden filename**')
+            assert 'SYNTHETIC_TITLE_SECRET' not in json.dumps(server_file(room))
+            plugin.command('set', 'force-media-title', '')
+            wait_for('cleared stream title retains hidden URL fallback',
+                     lambda: 'SYNTHETIC_TITLE_SECRET' not in plugin.read().get('media_title', '') and
+                     (server_file(room) or {}).get('name') == '**Hidden filename**')
+        # Offsets change only this player's local clock. Read the actual
+        # official player's position for several heartbeats to catch feedback.
+        for offset in (10, -10):
+            plugin.splay('set-offset', seconds=offset)
+            wait_for('offset changes only native clock by ' + str(offset),
+                     lambda: state().get('time_offset') == offset and
+                     abs(plugin.read().get('position', -999) - (35 + offset)) < 1)
+            until = time.monotonic() + 2.5
+            while time.monotonic() < until:
+                assert official.read().get('paused') is True
+                assert abs(official.read().get('position', -999) - 35) < 1, 'Offset correction leaked into room clock'
+                time.sleep(.1)
+        stdin_command(cli, 's50')
+        wait_for('official seek is translated through negative local offset',
+                 lambda: abs(official.read().get('position', -999)-50) < 1 and
+                 abs(plugin.read().get('position', -999)-40) < 1)
+        time.sleep(1.2)
+        plugin.command('seek', 60, 'absolute+exact')
+        wait_for('explicit native seek translates back into room time',
+                 lambda: abs(official.read().get('position', -999)-70) < 1 and
+                 abs(plugin.read().get('position', -999)-60) < 1)
+        for offset, clamped in ((-86400, 0), (86400, plugin.read()['duration'])):
+            plugin.splay('set-offset', seconds=offset)
+            wait_for('out-of-range offset clamps native media at ' + str(clamped),
+                     lambda: state().get('time_offset') == offset and
+                     state().get('time_offset_boundary') is True and
+                     plugin.read().get('paused') is True and
+                     (abs(plugin.read().get('position', -999)) < 1 if offset < 0 else
+                      clamped - 2 <= plugin.read().get('position', -999) < clamped))
+            until = time.monotonic() + 2.5
+            while time.monotonic() < until:
+                assert abs(official.read().get('position', -999)-70) < 1, 'Clamped media moved room time'
+                assert official.read().get('paused') is True
+                time.sleep(.1)
+        plugin.splay('set-offset', seconds=0)
+        wait_for('reset offset restores authoritative room clock', lambda: together(True, 70))
+        # The official client's first unpause can only mark itself ready.
+        # Establish both real clients as ready before testing a running room.
+        plugin.splay('ready', ready=True)
+        wait_for('native readiness is authoritative before running-room offset checks',
+                 lambda: state().get('ready') is True)
+        if not any(m['username'] == 'official' and m.get('ready') is True for m in state().get('members', [])):
+            stdin_command(cli, 't')
+        wait_for('official readiness is authoritative before running-room offset checks',
+                 lambda: any(m['username'] == 'official' and m.get('ready') is True
+                             for m in state().get('members', [])))
+        for offset in (-86400, 86400):
+            plugin.splay('set-offset', seconds=offset)
+            wait_for('native offset enters paused boundary hold',
+                     lambda: state().get('time_offset') == offset and plugin.read().get('paused') is True)
+            start = official.read()['position']
+            official.command('set', 'pause', 'no')
+            wait_for('official room advances while native boundary remains held',
+                     lambda: official.read().get('paused') is False and
+                     official.read().get('position', 0) > start + 2 and plugin.read().get('paused') is True)
+            until = time.monotonic() + 2.5
+            while time.monotonic() < until:
+                assert official.read().get('paused') is False, 'Local boundary hold paused official room'
+                assert plugin.read().get('paused') is True, 'Out-of-range native resumed instead of holding'
+                time.sleep(.1)
+            plugin.splay('set-offset', seconds=0)
+            wait_for('reset offset exits hold and follows advancing official room', lambda: together(False))
+            official.command('set', 'pause', 'yes')
+            wait_for('pause after hold recovery synchronizes both real players', lambda: together(True))
+        stdin_command(cli, 's35')
+        wait_for('offset regression restores common baseline', lambda: together(True, 35))
+        # Default membership policy must pause the room and the official
+        # player, rather than leaving only this native instance paused.
+        assert state()['room_policy'] == {'pause_on_join': True, 'pause_on_leave': True}
+        time.sleep(1.2)
+        plugin.command('set', 'pause', 'no')
+        wait_for('room advances before real official member leaves', lambda: together(False) and plugin.read().get('position', 0) > 36)
+        stdin_command(cli, 'r ' + room + '-membership-isolation')
+        wait_for('official member leaving pauses remaining native room',
+                 lambda: plugin.read().get('paused') is True and not any(
+                     member.get('username') == 'official' and member.get('room') == room
+                     for member in state().get('members', [])))
+        time.sleep(1.2)
+        plugin.command('set', 'pause', 'no')
+        wait_for('remaining native can resume its own room', lambda: plugin.read().get('paused') is False)
+        stdin_command(cli, 'r ' + room)
+        wait_for('official rejoin pauses the entire room and aligns both players', lambda: together(True))
+        stdin_command(cli, 's35')
+        wait_for('membership policy regression restores common baseline', lambda: together(True, 35))
         assert state()['chat_supported'] is True and state()['chat_max_length'] == 150
         message = '官方中文聊天 😀 {\\pos(1,1)} "quotes" ; set pause no'
         stdin_command(cli, 'ch ' + message)
@@ -283,7 +383,8 @@ def main():
         assert state()['connection'] == 'connected' and together(True, 35)
         plugin.splay('ready', ready=True)
         wait_for('plugin readiness round trip', lambda: state().get('ready') is True)
-        stdin_command(cli, 't')
+        if not any(m['username'] == 'official' and m.get('ready') is True for m in state().get('members', [])):
+            stdin_command(cli, 't')
         wait_for('official readiness appears in plugin members', lambda: any(m['username'] == 'official' and m.get('ready') is True for m in state().get('members', [])))
         stdin_command(cli, 'p')
         wait_for('official play reaches plugin', lambda: together(False))
@@ -304,8 +405,12 @@ def main():
         plugin.command('seek', 90, 'absolute+exact')
         wait_for('plugin seek reaches official', lambda: together(True, 90))
         second_room = room + '-second'
+        position_before_empty_room = plugin.read()['position']
         plugin.splay('room', room=second_room)
         wait_for('plugin switches room', lambda: state().get('room') == second_room)
+        wait_for('empty-room join preserves loaded media position and pauses',
+                 lambda: plugin.read().get('paused') is True and
+                 abs(plugin.read().get('position', -999)-position_before_empty_room) < 1)
         # The real official client is still in the original room during isolation.
         isolated = 'isolated-' + uuid.uuid4().hex
         stdin_command(cli, 'ch ' + isolated)
@@ -363,7 +468,8 @@ def main():
         plugin.command('stop')
         wait_for('stopped media clears actual server List metadata', lambda: not server_file(controlled))
         plugin.command('loadfile', plugin_media)
-        wait_for('reloaded fixture restores hidden actual server List metadata', lambda: (server_file(controlled) or {}).get('name') == '**Hidden filename**')
+        wait_for('reloaded fixture restores privacy-filtered actual server List metadata',
+                 lambda: (server_file(controlled) or {}).get('name') == expected_name)
         server.terminate()
         server.wait(timeout=5)
         wait_for('server loss stops plugin synchronization', lambda: state().get('connection') in ('error', 'disconnected'))
@@ -390,7 +496,14 @@ def main():
         wait_for('disabled chat returns explicit error and keeps synchronization connected',
                  lambda: state().get('connection') == 'connected' and
                  any('Chat is disabled' in error for error in plugin.read().get('errors', [])))
-        result = {'result': 'passed', 'mpv': str(args.mpv), 'upstream': str(args.upstream), 'artifacts': str(directory)}
+        result = {'result': 'passed', 'mpv': str(args.mpv), 'upstream': str(args.upstream),
+                  'plugin': str(args.plugin), 'plugin_sha256': hashlib.sha256(args.plugin.read_bytes()).hexdigest(),
+                  'http_fixture': args.http, 'artifacts': str(directory),
+                  'offset_positive_negative': True, 'offset_seek_translation': True,
+                  'offset_clamp_without_room_feedback': True, 'offset_reset_recovers': True,
+                  'offset_boundary_hold_and_running_room_recovery': True,
+                  'room_join_and_leave_pause': True, 'empty_room_preserves_position': True,
+                  'public_local_basename_or_private_url': True}
         (directory / 'result.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
     except Exception as exc:
         (directory / 'result.json').write_text(json.dumps({'result': 'failed', 'error': str(exc)}, indent=2), encoding='utf-8')

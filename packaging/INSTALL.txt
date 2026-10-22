@@ -1,39 +1,44 @@
-splay - Windows x64 development preview
+splay v0.1.0 - Windows x64
 
-Full instructions: docs/install.md. Preview 6 test record: docs/validation-v6.md.
-Source and downloads: https://github.com/noxowin/splay
-Use the source tag corresponding to the downloaded Release; CI builds are previews.
+English: docs/install.md | Chinese: docs/install.zh-CN.md
+Validation and limits: docs/validation-v0.1.0.md
+Source/downloads: https://github.com/noxowin/splay/releases/tag/v0.1.0
+Use the matching source tag. GitHub Actions artifacts are development builds.
 
 INSTALL / UPGRADE
-Close mpv. Copy all four files into its active configuration's scripts folder:
+Check the ZIP SHA256 against the release checksum. Close mpv.
+Copy all four files into the active mpv configuration's scripts directory:
   scripts/splay.lua
   scripts/splay_core.dll
   scripts/splay_overlay.lua
   scripts/splay_playlist.lua
-Replace only splay files; keep existing player settings and other scripts.
+Replace only splay files; keep player settings and other scripts.
 Requires Windows x64 mpv with C plugins and mp.input. uosc is optional.
 
 USE
-Open media normally. Shift+s or the bottom Sync icon opens the menu.
-Each new player starts with splay disabled. Enable it, choose a room, then connect.
-Defaults: syncplay.pl:8999, nickname splayuser, no default room.
-Connected: Enter opens/sends chat, Esc cancels, Shift+h opens session messages.
-Server passwords are remembered with Windows current-user encryption; settings
-allow deletion or disabling. Password dialogs are masked and bypass mpv console.
-Do not share private configuration, splay-history.json, splay-credentials.json
-or debug logs.
-All-ready autostart is opt-in per connection, with a five-second countdown.
-Use one coordinator per room; changing room or reconnecting turns it off.
-Media comparison uses names and duration only, not content hashes.
-Shared playlists do not transmit media. Local following is off by default.
-Temporary disconnections retry up to five times after an explicit connection;
-disconnect/disable cancels retries. Optional latency display/sharing is off by
-default; peers must also report their own server RTT. See docs/install.md.
+Open media normally. Shift+s or the Sync icon opens the menu.
+Each new player starts with splay disabled; enable it and connect manually.
+Initial server: syncplay.pl:8999; nickname: splayuser; no default room.
+Enter opens/sends quick chat; Esc cancels. Shift+h opens transparent message
+history with continuous chat; Page Up/Down or wheel scroll, Esc closes.
+Settings provides chat mode, visibility, room behavior and reconnect options.
+Chat mode and join/leave pause preferences are remembered with history enabled.
+Join pause requests a room-wide pause; a member leaving the same room also
+requests a pause. Both default on and obey controlled-room permissions.
+All-ready autostart defaults on with a five-second countdown. Use one coordinator
+per room. Server RTT display/sharing also defaults on; peers need reporting support.
+Smoother scrolling chat is optional and off by default; it adds playback load.
+Duration comparison uses exact reported values, not filenames or content hashes.
+Local time offset can be entered or suggested from a member's duration, then
+edited and confirmed. It is not saved across processes and resets for new media.
+Shared playlists do not transfer media. Local following defaults off. Sharing
+network URLs and opening unfamiliar network entries require explicit confirmation.
+Passwords use masked dialogs and Windows current-user encrypted memory.
+Do not share private settings, history, credentials or debug logs.
 
 UNINSTALL
-Close mpv and remove only the four splay files and any splay-only settings.
-Optional history/credential cleanup and configuration details: docs/install.md.
+Close mpv; remove only the four runtime files and splay-only settings.
+Optional history/credential cleanup: see the full installation guide.
 
-LICENSE / VERIFY
+LICENSE
 GPL-3.0-only; preserve LICENSE, THIRD_PARTY_NOTICES.md and licenses/.
-Compare the ZIP's SHA256 with its adjacent .sha256 file before installation.

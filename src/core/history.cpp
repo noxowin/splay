@@ -10,7 +10,7 @@ namespace splay {
 namespace {
 const char* fields[] = {"host", "port", "username", "room", "tls"};
 Json empty() {
-    Json value={{"schema",1},{"last",Json::object()},{"profiles",Json::array()},{"values",Json::object()}};
+    Json value={{"schema",1},{"last",Json::object()},{"profiles",Json::array()},{"values",Json::object()},{"preferences",Json::object()}};
     for(const auto field:fields)value["values"][field]=Json::array();
     return value;
 }
@@ -62,6 +62,21 @@ Json settings(const Json& source,bool allow_empty_room=false) {
     }
     return result;
 }
+Json preferences(const Json& source) {
+    if(!source.is_object())throw std::runtime_error("History preferences must be an object");
+    Json result=Json::object();
+    for(auto it=source.begin();it!=source.end();++it) {
+        const auto& key=it.key();
+        if(key=="chat_mode") {
+            if(!it.value().is_string()||(it.value()!="room"&&it.value()!="danmaku"))
+                throw std::runtime_error("Invalid chat mode preference");
+        } else if(key=="pause_on_leave"||key=="pause_on_join") {
+            if(!it.value().is_boolean())throw std::runtime_error("Invalid room pause preference");
+        } else throw std::runtime_error("Unknown history preference: "+key);
+        result[key]=it.value();
+    }
+    return result;
+}
 void append(Json& list,const Json& value) {
     if(std::find(list.begin(),list.end(),value)==list.end())list.push_back(value);
 }
@@ -100,6 +115,7 @@ Json read(const std::wstring& path) {
     try {
         if(!source.is_object()||source.at("schema")!=1||!source.at("profiles").is_array()||!source.at("last").is_object())throw std::runtime_error("schema");
         Json result=empty();
+        if(source.contains("preferences"))result["preferences"]=preferences(source["preferences"]);
         if(!source["last"].empty())result["last"]=settings(source["last"],true);
         for(const auto& item:source["profiles"]) {
             auto profile=settings(item);
@@ -161,10 +177,11 @@ Json History::handle(const Json& command) {
             wide(candidate);
             path_=std::move(candidate);
         } else if(action!="history-save"&&action!="history-rename"&&action!="history-delete"&&
-                  action!="history-clear-values"&&action!="history-clear")throw std::runtime_error("Unknown history command");
+                  action!="history-clear-values"&&action!="history-clear"&&action!="history-preferences")throw std::runtime_error("Unknown history command");
         const auto remember=action=="history-save"&&command.value("remember_profile",false);
         Json draft;
         if(action=="history-save")draft=settings(command.at("settings"),!remember);
+        if(action=="history-preferences")draft=preferences(command.at("preferences"));
         if(action=="history-rename"||action=="history-delete")draft=settings(command.at("settings"));
         std::string name,field;
         if(action=="history-rename")name=display_name(command.at("name"));
@@ -185,7 +202,15 @@ Json History::handle(const Json& command) {
             result=std::move(next);
         } else if(action!="history-load") {
             auto next=result;
-            if(action=="history-clear")next=empty();
+            if(action=="history-clear") {
+                next=empty();
+                next["preferences"]=result["preferences"];
+            }
+            else if(action=="history-preferences") {
+                // Re-read under the shared lock, then merge only supplied keys.
+                // Preferences never modify connection profiles or credentials.
+                for(auto it=draft.begin();it!=draft.end();++it)next["preferences"][it.key()]=it.value();
+            }
             else if(action=="history-clear-values")next["values"][field]=Json::array();
             else if(action=="history-delete") {
                 auto& profiles=next["profiles"];

@@ -16,6 +16,15 @@ local function submit_text(value)
     for character in value:gmatch('[%z\1-\127\194-\244][\128-\191]*') do mp.commandv('keypress',character) end
     mp.commandv('keypress','ENTER')
 end
+local function expected_preferences(restored)
+    local alternate=restored and opts.stage=='draft' or not restored and opts.stage=='profile'
+    return {chat_mode=alternate and 'danmaku' or 'room',pause_on_leave=not alternate,pause_on_join=not alternate}
+end
+local function assert_chat_mode(restored)
+    local overlay=mp.get_property_native('user-data/splay-overlay')
+    assert(type(overlay)=='table' and overlay.chat_mode==expected_preferences(restored).chat_mode,
+        'production overlay must apply the '..(restored and 'restored' or 'saved')..' chat mode')
+end
 local host_shortcuts=0
 mp.add_key_binding('Shift+h','history-host-shortcut',function() host_shortcuts=host_shortcuts+1 end)
 mp.observe_property('user-data/splay','native',function(_,value)
@@ -30,8 +39,15 @@ after(1.0,function()
     local value=mp.get_property_native('user-data/splay')
     assert(type(value)=='table' and value.enabled==false,'every fresh player must start disabled')
     assert(host_shortcuts==1,'disabled splay must preserve the host history shortcut')
+    assert_chat_mode(true)
+    print('HISTORY_PREFERENCES_RESTORED '..utils.format_json(expected_preferences(true)))
     print('HISTORY_RESTART_DISABLED true')
     action('toggle-enabled')
+end)
+after(1.15,function()
+    if opts.stage=='profile' or opts.stage=='draft' then
+        action('toggle-chat-mode');action('toggle-pause-on-leave');action('toggle-pause-on-join')
+    end
 end)
 after(1.3,function()
     if opts.stage=='profile' then action('save-profile')
@@ -49,7 +65,8 @@ end)
 after(1.9,function()
     if opts.stage~='profile' then submit_text(opts.stage=='draft' and '' or '重启昵称')
     else
-        assert(mp.get_property_native('user-data/mpv/console/open')==true,'enabled Shift+h must open production message history')
+        assert(mp.get_property_native('user-data/mpv/console/open')==true and mp.get_property_native('user-data/splay-console-open')==true,
+            'enabled Shift+h must open the production persistent history console even without media')
         assert(host_shortcuts==1,'enabled splay shortcut must receive its own binding')
         mp.commandv('keypress','ESC')
     end
@@ -63,6 +80,8 @@ end)
 after(2.8,function()
     local value=mp.get_property_native('user-data/splay')
     assert(type(value)=='table' and value.enabled==true and value.connection=='disconnected')
+    assert_chat_mode(false)
+    print('HISTORY_PREFERENCES_SAVED '..utils.format_json(expected_preferences(false)))
     print('HISTORY_RESTART_SAVED '..opts.stage)
     action('toggle-enabled')
 end)

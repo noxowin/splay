@@ -68,10 +68,17 @@ assert(#core()==0 and #loads()==0)
 state({playlist={files={'b.mp4','a.mp4'},index=0}})
 assert(#loads()==0 and not properties['user-data/splay-playlist'].follow,'first authoritative list must preserve caller media')
 action('import-preview');assert(#core()==0,'import requires explicit confirmation')
-action('import')
-assert(core()[1].action=='playlist-set' and #core()[1].files==4)
-assert(core()[1].files[3]=='a.mp4' and core()[1].files[4]=='b.mp4','native queue import shares basenames only')
+assert(properties['user-data/splay-playlist'].menu=='share')
+local network_warning=false
+for _,label in ipairs(selected.items) do if label:find('1 个网络项目将共享完整地址',1,true) then network_warning=true end end
+assert(network_warning,'preview must disclose that network addresses are shared in full')
 no_private_text()
+action('import');assert(#core()==0,'legacy import action also prepares rather than bypasses preview')
+action('share-confirm')
+assert(core()[1].action=='playlist-set' and #core()[1].files==3)
+assert(core()[1].files[1]=='b.mp4' and core()[1].files[2]=='a.mp4' and core()[1].files[3]=='https://private.example/a?token=PRIVATE_TOKEN',
+    'consent shares the exact selected network address while existing native basenames are deduplicated')
+assert(#loads()==0,'sharing the queue must preserve the currently loaded media')
 action('add-current');assert(#core()==1,'current private URL must not be auto-shared')
 item(2);action('select')
 assert(count('playlist-index')==1 and #loads()==0,'explicit room selection waits for authoritative echo')
@@ -116,7 +123,8 @@ state({playlist={files={'https://known.invalid/media?private=local'},index=0}});
 assert(#loads()==1 and loads()[1][2]=='https://known.invalid/media?private=local','caller queue URLs are already known local associations')
 
 start();state();action('add-url');finish('https://public.invalid/movie?share=yes')
-assert(core()[1].files[3]=='https://public.invalid/movie?share=yes' and #loads()==0,'manual URL sharing is explicit but does not start playback')
+assert(#core()==0,'typing an address must lead to a confirmation preview')
+action('share-confirm');assert(core()[1].files[3]=='https://public.invalid/movie?share=yes' and #loads()==0,'manual URL sharing requires explicit confirmation and preserves playback')
 start();state();item(2);action('bind');state({playlist={files={'a.mp4','c.mp4'},index=0}});finish('D:/fixtures/b.mp4')
 action('play-current');assert(#loads()==0,'stale binding input cannot affect another generation')
 
@@ -171,5 +179,26 @@ for _,value in ipairs({'play-current','follow'}) do
         'old uosc page actions cannot load or enable follow after reconnect')
     assert(properties['user-data/splay-playlist'].menu=='','identity transition closes the old uosc menu')
 end
-print('PLAYLIST_FORMS_PASSED first-state preservation, explicit basename import, URL privacy and single-address consent, ACL, known and bound local resolution, generation-safe echo, follow and single EOF advance, native/uosc menu contracts')
+
+-- Share previews bind consent to the exact room and authoritative list.
+for _,transition in ipairs({'room','list','disabled','reconnect'}) do
+    start({playlist={{filename='D:/fixtures/c.mp4'},{filename='https://share.invalid/video?token=PRIVATE_TOKEN'}}})
+    state();action('import-preview');assert(#core()==0)
+    if transition=='room' then state({room='another-room'})
+    elseif transition=='list' then state({playlist={files={'b.mp4'},index=0}})
+    elseif transition=='disabled' then state({enabled=false})
+    else state({connection='disconnected'});state({connection='connected'}) end
+    action('share-confirm');assert(#core()==0 and #loads()==0,'stale share consent must fail after '..transition)
+end
+start({playlist={{filename='D:/fixtures/c.mp4'},{filename='D:/fixtures/c.mp4'},
+    {filename='https://share.invalid/video?private=local'},{filename='https://share.invalid/video?private=local'},
+    {filename='av://camera'},{filename='D:/missing.mp4'}}})
+state();action('import-preview');action('home');action('share-confirm')
+assert(#core()==0,'back cancels the prepared consent')
+action('import-preview');action('share-confirm')
+assert(#core()[1].files==4 and core()[1].files[3]=='c.mp4' and core()[1].files[4]=='https://share.invalid/video?private=local')
+assert(#loads()==0,'deduplication and skipping invalid queue items never starts playback')
+start();state();action('import-preview');assert(#core()==0,'an already shared local queue needs no command')
+
+print('PLAYLIST_FORMS_PASSED first-state preservation, explicit queue and URL preview consent, deduplication and stale-consent isolation, URL privacy and single-address consent, ACL, known and bound local resolution, generation-safe echo, follow and single EOF advance, native/uosc menu contracts')
 real_mp.commandv('quit',0)

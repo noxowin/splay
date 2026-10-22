@@ -5,7 +5,7 @@ local utils=require 'mp.utils'
 local options=require 'mp.options'
 local opt={source=''};options.read_options(opt,'forms')
 local handlers,commands,selected,prompted,bindings,notices,properties,observers,active_request,registered_events
-local terminated
+local terminated,console_layer
 local overrides={}
 local fixture={host='history.example',port=9001,username='历史昵称',room='历史房间',tls='require'}
 local history={schema=1,last=fixture,profiles={fixture},values={host={'history.example'},port={9001},username={'历史昵称'},room={'历史房间'},tls={'require'}}}
@@ -17,14 +17,25 @@ fake.set_property_native=function(name,value) properties[name]=value end
 fake.observe_property=function(name,_,fn) observers[name]=fn;fn(name,properties[name]) end
 fake.register_script_message=function(name,fn) handlers[name]=fn end
 fake.register_event=function(name,fn) registered_events[name]=fn end
-fake.add_timeout=function(_,fn) fn() end
+fake.add_timeout=function(delay,fn)
+    local timer={kill=function() end}
+    if delay==0 or delay==0.01 then fn() end
+    return timer
+end
+fake.get_time=function() return 100 end
+fake.get_osd_size=function() return 1100,800 end
+fake.create_osd_overlay=function()
+    console_layer={data='',update=function(self) self.updates=(self.updates or 0)+1 end,
+        remove=function(self) self.data='';self.removed=true end}
+    return console_layer
+end
 fake.add_key_binding=function(key,name,fn,flags) bindings[name]={key=key,fn=fn,flags=flags};handlers[name]=fn end
 fake.add_forced_key_binding=function(key,name,fn) bindings[name]={key=key,fn=fn,forced=true} end
 fake.remove_key_binding=function(name) bindings[name]=nil end
 fake.osd_message=function(text) notices[#notices+1]=text end
 package.loaded.mp=fake
 package.loaded['mp.options']={read_options=function(cfg) for key,value in pairs(overrides) do cfg[key]=value end end}
-package.loaded['mp.input']={select=function(value) selected=value;active_request=value end,get=function(value) prompted=value;active_request=value end,
+package.loaded['mp.input']={select=function(value) selected=value;active_request=value end,get=function(value) prompted=value;active_request=value;if value.opened then value.opened() end end,
     terminate=function()
         terminated=terminated+1;local request=active_request;active_request=nil
         if request and request.closed then request.closed() end
@@ -89,12 +100,16 @@ end
 local function model()
     for i=#commands,1,-1 do if commands[i][3]=='splay-menu-model' then return utils.parse_json(commands[i][4]) end end
 end
+local function console_text()
+    return console_layer.data:gsub('{[^}]*}','')
+end
 local function label(fragment)
+    if properties['user-data/splay-console-open'] then return console_text():find(fragment,1,true)~=nil end
     for _,text in ipairs(selected.items) do if text:find(fragment,1,true) then return true end end
     return false
 end
 local function history_label()
-    act('more')
+    act('settings')
     local result
     for _,text in ipairs(selected.items) do if text:find('消息记录:',1,true) then result=text end end
     dismiss();return result
@@ -117,16 +132,16 @@ act('room');finish('');history_reply(history)
 credential_reply(last('credential-status'),false)
 assert(last('history-save').settings.room=='' and not last('history-save').remember_profile,'blank room draft survives restore')
 act('connect');assert(count('connect')==0)
-act('profiles');finish(1,'select');finish(1,'select');dismiss();credential_reply(last('credential-status'),false);act('connect')
+act('profiles');finish(2,'select');finish(3,'select');dismiss();credential_reply(last('credential-status'),false);act('connect')
 assert(last('connect').room=='历史房间' and last('connect').password==nil and last('connect').auto_reconnect==true)
 assert(last('history-save').settings.password==nil)
 state();assert(bindings['splay-chat-enter'] and bindings['splay-chat-enter'].forced,'eligible Enter overrides user fullscreen binding only while available')
-assert(#model().items==5 and model().items[3].value=='playlist' and model().items[4].value=='more')
+assert(#model().items==6 and model().items[3].value=='playlist' and model().items[4].value=='room-actions' and model().items[5].value=='settings')
 assert(model().items[1].title:find('history.example:9001',1,true) and model().items[1].title:find('active-room',1,true) and not model().items[1].title:find('历史房间',1,true))
 for _,item in ipairs(model().items) do assert(item.value~='chat' and item.value~='members') end
 act('connection');assert(label('history.example : 9001') and label('服务器密码: 空（无密码）'));dismiss()
 act('endpoint');assert(label('服务器: history.example') and label('端口: 9001'));dismiss()
-act('more');assert(label('房间成员: 0') and #selected.items<=8);dismiss()
+act('room-actions');assert(label('房间成员: 0') and #selected.items<=8);dismiss()
 for _,name in ipairs({'user-data/mpv/console/open','user-data/mpv/context-menu/open'}) do
     prop(name,true);assert(not bindings['splay-chat-enter']);prop(name,false);assert(bindings['splay-chat-enter'])
 end
@@ -148,7 +163,7 @@ act('password');local native_password=last('secret-input')
 assert(prompted==previous_prompt and native_password.purpose=='server' and native_password.host=='history.example')
 assert(native_password.remember_password==true and native_password.password==nil and not bindings['splay-chat-enter'])
 secret_reply(native_password,'opaque-server-1',true)
-act('password-settings');assert(label('已加密保存'));dismiss()
+act('connection');assert(label('已加密保存'));dismiss()
 act('connect');assert(last('connect').password==nil and last('connect').password_token=='opaque-server-1')
 act('room');finish(1,'select');finish('same-server-room');dismiss()
 act('connect');assert(last('connect').use_saved_password==true,'room edits retain endpoint credentials')
@@ -163,13 +178,13 @@ assert(last('connect').use_saved_password==false,'late reply for another endpoin
 handlers['splay-credential'](utils.format_json({schema=1,host='other.example',port=9001,saved=true}))
 act('clear-password');assert(last('credential-delete').host=='other.example')
 credential_reply(last('credential-delete'),false)
-act('password-settings');assert(label('密码: 空'));dismiss()
+act('connection');assert(label('密码: 空'));dismiss()
 act('toggle-remember-password');act('password')
 secret_reply(last('secret-input'),'opaque-memory-only',false)
 act('connect');assert(last('connect').password_token=='opaque-memory-only' and last('connect').remember_password==false)
 act('connect');assert(last('connect').reuse_password==true and last('connect').password_token==nil,'opt-out reuses only the native endpoint-bound hash')
 act('toggle-remember-password');assert(count('credential-save')==0,'saving requires re-entry in the Windows dialog')
-act('profiles');finish(1,'select');finish(1,'select');credential_reply(last('credential-status'),true);act('connect');assert(last('connect').password==nil)
+act('profiles');finish(2,'select');finish(3,'select');credential_reply(last('credential-status'),true);act('connect');assert(last('connect').password==nil)
 act('room');finish(1,'select');finish('new-room');dismiss();assert(count('room')==0)
 act('join-room');assert(last('room').room=='new-room')
 handlers['splay-command'](utils.format_json({action='connect',host='external.example',port=8999,username='external',room='external-room',tls='off',password='EXTERNAL_SECRET',custom='preserved'}))
@@ -180,10 +195,12 @@ act('chat-history');assert(label('before␀after'));dismiss()
 handlers['splay-event']('{"schema":1,"type":"chat","username":"user","text":"literal\\\\u0000after"}')
 act('chat-history');assert(label('u0000after'),'escaped backslashes remain literal');dismiss()
 for index=1,305 do handlers['splay-event'](utils.format_json({schema=1,id=index,type='chat',username='user',text='message'..index})) end
-act('message-history');assert(#selected.items==300 and selected.items[1]:find('message6',1,true));dismiss()
+act('message-history');assert(label('300 / 300'),'history must retain its bounded 300 events')
+for _=1,40 do bindings['splay-console-page-up'].fn() end
+assert(label('user: message6') and not label('user: message5'),'oldest retained event must be message6');dismiss()
 handlers['splay-event'](utils.format_json({schema=1,id=305,type='chat',username='user',text='duplicate'}))
-act('message-history');assert(#selected.items==300 and not label('duplicate'));dismiss()
-state({room='different-room'});act('message-history');assert(#selected.items==300);dismiss()
+act('message-history');assert(label('300 / 300') and not label('duplicate'));dismiss()
+state({room='different-room'});act('message-history');assert(label('300 / 300'));dismiss()
 handlers['splay-event'](utils.format_json({schema=1,type='chat',username='user',text='current-room'}))
 state({connection='disconnected',room='different-room'});act('message-history');assert(label('current-room'));dismiss()
 local events={
@@ -199,7 +216,7 @@ state({warning='Waiting for media; synchronization is suspended',error='Example 
 state({warning='Waiting for media; synchronization is suspended',error='Example server error'})
 act('message-history');assert(label('连接: 连接中') and label('切换房间: another-room') and label('joiner 加入房间'))
 assert(label('joiner 已准备') and label('更新共享播放列表: 2 项') and label('跳转 · 65 秒') and label('列表操作已发送'))
-local warning_count=0;for _,text in ipairs(selected.items) do if text:find('等待媒体',1,true) then warning_count=warning_count+1 end end
+local _,warning_count=console_text():gsub('等待媒体','')
 assert(warning_count==1,'state warning transitions append once');dismiss()
 act('playlist');local playlist_open=false
 for _,command in ipairs(commands) do if command[2]=='splay_playlist' and command[3]=='splay-playlist-open' then playlist_open=true end end
@@ -208,9 +225,9 @@ local large_files={};for i=1,300 do large_files[i]=string.rep('episode-',12)..i.
 handlers['splay-command'](utils.format_json({action='playlist',files=large_files}))
 assert(#last('playlist').files==300,'full shared playlist commands may exceed the old 16 KiB UI cap')
 act('toggle-status');act('toggle-buttons')
-local overlay_commands={}
-for _,item in ipairs(commands) do if item[2]=='splay_overlay' then overlay_commands[item[3]]=true end end
-assert(overlay_commands['overlay-toggle-status'] and overlay_commands['overlay-toggle-buttons'])
+local toggled_state
+for _,item in ipairs(commands) do if item[2]=='splay_overlay' and item[3]=='splay-state' then toggled_state=utils.parse_json(item[4]) end end
+assert(toggled_state.settings.status_osd==false and toggled_state.settings.button_enabled==false)
 act('toggle-enabled');assert(not bindings['splay-chat-enter'] and not bindings['splay-message-history'] and count('disconnect')==1 and not model().enabled)
 local playlist_count=count('playlist');handlers['splay-command'](utils.format_json({action='playlist',files={'ignored'}}))
 assert(count('playlist')==playlist_count,'disabled splay must gate shared playlist actions')
@@ -234,7 +251,7 @@ commands={};handlers['splay-playlist-ready']();assert(commands[2][2]=='splay_pla
 start();local legacy=utils.parse_json(utils.format_json(history));legacy.last.room='DeFaUlT';legacy.profiles[1].room='Default'
 history_reply(legacy);act('toggle-enabled');act('connect');assert(count('connect')==0)
 credential_init(false)
-act('profiles');finish(1,'select');finish(1,'select');credential_reply(last('credential-status'),false);act('connect');assert(last('connect').room=='Default')
+act('profiles');finish(2,'select');finish(3,'select');credential_reply(last('credential-status'),false);act('connect');assert(last('connect').room=='Default')
 -- A late history reply preserves edited fields and restores the remaining draft fields.
 start();act('toggle-enabled');act('host');finish('typed-first.example');dismiss()
 history_reply(history)
@@ -265,7 +282,7 @@ assert(notices[#notices]:find('fixture save failure',1,true))
 act('toggle-remember-password');act('password');secret_reply(last('secret-input'),'retry-memory',false)
 act('connect');assert(last('connect').remember_password==false and last('connect').password_token=='retry-memory')
 start({host='race.example',port=8999,username='race',room='room',tls='off',history_enabled=false})
-credential_init(true);act('toggle-enabled');act('toggle-remember-password');act('password-settings')
+credential_init(true);act('toggle-enabled');act('toggle-remember-password');act('connection')
 assert(label('当前不使用'));dismiss();act('connect');assert(last('connect').use_saved_password==false and last('connect').password==nil)
 start({host='race.example',port=8999,username='race',room='room',tls='off',history_enabled=false})
 credential_init(false);act('toggle-enabled');state()
@@ -277,7 +294,7 @@ start({host='rooms.example',port=8999,username='race',room='local-room',tls='off
 credential_init(false);act('toggle-enabled')
 state({room='local-room',members={{username='inside',room='local-room',ready=true},
     {username='outsider',room='foreign-room',ready=false},{username='unknown',room='local-room'}}})
-act('more');assert(label('房间成员: 2'));dismiss()
+act('room-actions');assert(label('房间成员: 2'));dismiss()
 act('members');assert(label('inside') and label('unknown') and label('准备状态未知') and not label('outsider'));dismiss()
 local history_title=history_label()
 for index,event in ipairs({
@@ -322,7 +339,7 @@ assert(notices[#notices]:find('正在保存连接组合',1,true))
 history_reply(history,saved_profile);assert(notices[#notices]:find('连接组合已保存',1,true))
 act('toggle-remember-password');act('save-profile');history_reply(history,last('history-save'))
 assert(notices[#notices]:find('已有加密密码当前不使用',1,true));act('toggle-remember-password')
-act('profiles');finish(1,'select');assert(label('填入连接信息') and label('删除此组合'));finish(3,'select')
+act('profiles');finish(2,'select');assert(label('修改连接信息') and label('删除此组合'));finish(4,'select')
 assert(selected.prompt:find('同服务器端口的其他组合仍可使用密码',1,true));finish(1,'select')
 assert(count('history-delete')==0 and count('credential-delete')==0,'cancel must keep the combination and endpoint password')
 start({host='waiting.example',port=8999,username='draft',room='room',history_enabled=true})
@@ -338,9 +355,9 @@ start({history_enabled=false});credential_init(false);act('toggle-enabled');act(
 assert(count('history-save')==0 and notices[#notices]:find('连接记忆已关闭',1,true))
 -- Profile management keeps a full settings identity across live reordering.
 start();credential_init(true);history_reply(history);credential_reply(last('credential-status'),true);act('toggle-enabled')
-act('settings');assert(#selected.items<=7 and label('连接历史管理') and label('自动重连'));dismiss()
-act('history-management');assert(#selected.items<=7 and label('命名 / 重命名 / 删除组合'));dismiss()
-act('manage-profiles');finish(1,'select');finish(2,'select')
+act('settings');assert(#selected.items<=20 and label('连接历史管理') and label('自动重连') and label('成员加入时暂停房间'));dismiss()
+act('history-management');assert(#selected.items<=7 and label('已保存的连接组合'));dismiss()
+act('manage-profiles');finish(2,'select');finish(5,'select')
 finish('家庭影院')
 local rename=last('history-rename')
 assert(rename.name=='家庭影院' and rename.settings.host=='history.example' and rename.settings.room=='历史房间' and rename.index==nil)
@@ -350,7 +367,7 @@ act('profiles');assert(label('家庭影院'));dismiss()
 act('manage-profiles');local old_selection=selected
 local fresh=utils.parse_json(utils.format_json(named));fresh.profiles={{host='another.example',port=8999,username='other',room='other',tls='off'},fresh.profiles[1]}
 act('save-profile');history_reply(fresh,last('history-save'))
-assert(selected==old_selection);finish(1,'select');finish(3,'select');assert(selected.prompt:find('字段建议、当前连接和密码保留',1,true));finish(2,'select')
+assert(selected==old_selection);finish(2,'select');finish(4,'select');assert(selected.prompt:find('字段建议、当前连接和密码保留',1,true));finish(2,'select')
 local deleting=last('history-delete')
 assert(deleting.settings.host=='history.example' and deleting.settings.room=='历史房间' and deleting.index==nil,'management must use the originally selected settings identity')
 history_reply(fresh,deleting)
@@ -393,25 +410,22 @@ act('disconnect');assert(last('disconnect'))
 handlers['splay-event'](utils.format_json({schema=1,id=990,type='connection',connection='error'}))
 state({connection='error',error='retry failure',reconnect={enabled=true,pending=true,attempt=2,remaining=3}})
 act('message-history');local failures=0
-for _,text in ipairs(selected.items) do if text:find('retry failure',1,true) then failures=failures+1 end end
+local _,found_failures=console_text():gsub('retry failure','');failures=found_failures
 assert(failures==1 and not label('连接: 错误'),'countdown refresh and generic error events must not duplicate failure messages')
 dismiss()
--- Latency display/sharing is opt-in and distinguishes local measurements from
--- peer reports without suggesting a connection to the peer's machine.
+-- Latency display/sharing defaults on; show valid fresh values only.
 start();assert(count('latency')==0,'fresh disabled UI must not enable latency sharing')
-act('toggle-enabled');assert(last('latency').enabled==false)
-act('display');assert(label('延迟显示与共享: 关闭'));dismiss()
-act('toggle-latency');assert(last('latency').enabled==true)
+act('toggle-enabled');assert(last('latency').enabled==true)
+act('settings');assert(label('延迟显示与共享: 开启'));dismiss()
 state({username='self',latency={enabled=true,rtt_ms=12.4,reported=true,stale=false,self_reported=false},members={
     {username='self',room='active-room',ready=false},
     {username='peer',room='active-room',latency={rtt_ms=84.6,reported=true,stale=false,self_reported=true}},
     {username='official',room='active-room',latency={reported=false,stale=false,self_reported=true}},
     {username='old',room='active-room',latency={rtt_ms=99,reported=true,stale=true,self_reported=true}},
 }})
-act('members');assert(label('本机 RTT: 12 ms') and label('上报 RTT: 85 ms') and label('上报 RTT: 未上报') and label('上报 RTT: 过期'))
-assert(label('官方客户端未上报延迟'));dismiss()
+act('members');assert(label('12 ms') and label('85 ms') and not label('99 ms'),'only valid fresh measurements appear');dismiss()
 act('toggle-enabled');assert(last('latency').enabled==false)
-act('toggle-enabled');assert(last('latency').enabled==true,'explicit UI re-enable reapplies the opt-in setting')
+act('toggle-enabled');assert(last('latency').enabled==true,'explicit UI re-enable reapplies the local setting')
 act('toggle-latency');assert(last('latency').enabled==false)
 act('members');assert(not label('RTT:'));dismiss()
 for _,command in ipairs(core()) do
@@ -456,20 +470,20 @@ local media_members={
 state({username='self',members=media_members})
 local media=display_state().members
 assert(media[1].media.check=='self' and media[1].media.title=='影片名称: 导演剪辑版' and media[1].media.duration==500)
-assert(media[2].media.check=='metadata_match' and media[2].media.check_label=='疑似同片')
+assert(media[2].media.check=='duration_mismatch' and media[2].media.check_label=='时长不同')
 assert(media[3].media.check=='duration_mismatch')
 assert(math.abs(media[3].media.duration_delta-2.5001)<0.000001)
-assert(media[3].media.check_detail:find('对方长 2.5001 秒',1,true) and media[3].media.check_detail:find('时长接近阈值：2.5 秒',1,true))
-assert(media[4].media.check=='name_mismatch' and media[4].media.check_label=='名称不同')
-assert(media[4].media.name_basis=='different' and media[4].media.check_detail:find('无法确定是否为同一影片',1,true))
-assert(media[5].media.check=='duration_match' and media[5].media.check_detail:find('无法确认同片',1,true))
+assert(media[3].media.check_detail:find('对方长 2.5001 秒',1,true) and not media[3].media.check_detail:find('阈值',1,true))
+assert(media[4].media.check=='duration_match' and media[4].media.check_label=='时长相同')
+assert(media[4].media.name_basis=='different' and media[4].media.check_detail:find('原始秒值相同',1,true))
+assert(media[5].media.check=='duration_match' and media[5].media.check_detail:find('原始秒值相同',1,true))
 assert(media[5].media.duration_delta==0 and media[5].media.name_basis=='unavailable')
 assert(media[6].media.check=='unknown' and media[7].media.check=='unknown' and not media[7].media.loaded)
 assert(media[8].media.check=='unknown','foreign rooms must not receive a local-media comparison')
 assert(media[8].media.duration_delta==nil and media[9].media.duration_delta_label=='对方短 12.3 秒')
 assert(media[2].media.name_basis=='same' and media[2].media.check_detail:find('本机文件名「Film.mkv」',1,true))
 assert(media[2].media.check_detail:find('本机时长：8:20（500 秒）',1,true))
-act('members');assert(label('8:20') and label('疑似同片'));dismiss()
+act('members');assert(label('8:20') and label('时长不同'));dismiss()
 act('member-details:self');assert(label('影片名称: 导演剪辑版') and label('本机时长：8:20'));dismiss()
 act('member-details:same');assert(label('2.5 秒') and label('本机文件名'));dismiss()
 act('member-details:shorter');assert(label('对方短 12.3 秒'));dismiss()
@@ -558,7 +572,132 @@ dismiss();act('join-form');assert(label('加入') and not label('创建并进入
 state({host='active.example',port=8999,room='actual-room'})
 act('room');finish('draft-room');dismiss()
 assert(model().items[1].popup_title=='active.example:8999' and model().items[1].subtitle=='actual-room','connected home describes the active session instead of edited draft fields')
-act('more');assert(label('房间成员:') and label('消息记录:') and label('全员准备后自动开播') and label('加入其他房间') and label('创建房间') and label('关闭 splay'));dismiss()
+act('settings');assert(not label('房间成员:') and label('消息记录:') and label('全员准备后自动开播') and label('关闭 splay'));dismiss()
 act('room-actions');assert(label('认证房间操作员') and label('创建受控房间') and not label('全员准备后自动开播'));dismiss()
-print('UI_FORMS_PASSED default off, compact pages, endpoint editing, encrypted credential commands and stale reply isolation, playlist state handoff, bounded all-event history and deduplication, conditional Enter/history shortcuts, modal generations, cancellation, overlay replay')
+
+-- Preferences are restored independently from connection fields. A late load
+-- must not overwrite controls touched in this process, and writes contain only
+-- the changed local preference rather than connection/password data.
+local preferences=utils.parse_json(utils.format_json(history))
+preferences.preferences={chat_mode='danmaku',pause_on_leave=false,pause_on_join=false}
+start();act('toggle-enabled')
+assert(display_state().settings.latency_enabled and display_state().settings.autostart_enabled and display_state().settings.auto_reconnect and
+    display_state().settings.pause_on_leave and display_state().settings.pause_on_join,'fresh defaults enable all documented room policies')
+history_reply(preferences)
+assert(display_state().settings.chat_mode=='danmaku' and not display_state().settings.pause_on_join and not display_state().settings.pause_on_leave)
+assert(last('room-policy').pause_on_join==false and last('room-policy').pause_on_leave==false)
+act('toggle-chat-mode');assert(last('history-preferences').preferences.chat_mode=='room')
+act('toggle-pause-on-join');assert(last('history-preferences').preferences.pause_on_join==true and last('room-policy').pause_on_join)
+act('settings');assert(label('成员加入时暂停房间: 开启') and label('聊天显示模式: 聊天室') and not label('密码设置') and not label('清除密码'));dismiss()
+start();act('toggle-enabled');act('toggle-chat-mode');act('toggle-pause-on-join')
+assert(count('history-preferences')==0,'defer preference writes until the current file is loaded')
+local late=utils.parse_json(utils.format_json(preferences));late.preferences.chat_mode='room';late.preferences.pause_on_join=true
+history_reply(late)
+assert(display_state().settings.chat_mode=='danmaku' and not display_state().settings.pause_on_join and not display_state().settings.pause_on_leave)
+local preference_write=last('history-preferences')
+assert(preference_write.preferences.chat_mode=='danmaku' and preference_write.preferences.pause_on_join==false and preference_write.preferences.pause_on_leave==nil)
+start({history_enabled=false});act('toggle-enabled');act('toggle-chat-mode');act('toggle-pause-on-leave')
+assert(count('history-preferences')==0 and last('room-policy').pause_on_leave==false)
+start();local invalid=utils.parse_json(utils.format_json(history));invalid.preferences={chat_mode='invalid',pause_on_join='false',pause_on_leave=4}
+history_reply(invalid);assert(display_state().settings.chat_mode=='room' and display_state().settings.pause_on_join and display_state().settings.pause_on_leave)
+
+-- History is a transparent ASS layer plus a persistent real console input:
+-- repeat sends keep input ownership, Esc restores the host keys, and a room
+-- or connection identity transition permanently invalidates the old callback.
+start({history_enabled=false});act('toggle-enabled');state({chat_max_length=20})
+handlers['splay-event'](utils.format_json({schema=1,id=2001,type='chat',username='同伴',text='普通白字'}))
+local function chat_event()
+    for i=#commands,1,-1 do
+        if commands[i][2]=='splay_overlay' and commands[i][3]=='splay-event' then
+            local event=utils.parse_json(commands[i][4]);if event.type=='chat' then return event end
+        end
+    end
+end
+local nick_color=chat_event().chat_color
+handlers['splay-event'](utils.format_json({schema=1,id=2002,type='chat',username='another',text='other'}))
+handlers['splay-event'](utils.format_json({schema=1,id=2003,type='chat',username='同伴',text='再次白字'}))
+assert(chat_event().chat_color==nick_color and nick_color~='FFFFFF','full nickname has a stable distinct colour')
+act('message-history');local persistent=prompted
+assert(persistent.keep_open and properties['user-data/splay-console-open'] and not bindings['splay-chat-enter'])
+assert(console_layer.data:find('\\1c&H'..nick_color..'&',1,true) and console_layer.data:find('\\1c&HFFFFFF&',1,true))
+assert(not console_layer.data:find('\\p1',1,true),'history renders transparent text without an opaque background drawing')
+persistent.submit('第一条');persistent.submit('第二条')
+assert(count('chat')==2 and last('chat').text=='第二条' and active_request==persistent and properties['user-data/splay-console-open'])
+persistent.submit('');persistent.submit('bad\ntext');persistent.submit(string.rep('字',21))
+assert(count('chat')==2,'persistent console applies nonempty/control/UTF-8 character limits')
+for i=1,40 do handlers['splay-event'](utils.format_json({schema=1,id=2100+i,type='chat',username='同伴',text='scroll-'..i})) end
+bindings['splay-console-page-up'].fn()
+assert(label('正在浏览较早消息'))
+handlers['splay-event'](utils.format_json({schema=1,id=2200,type='chat',username='同伴',text='new-message'}))
+assert(label('1 条新消息'))
+bindings['splay-console-page-down'].fn();bindings['splay-console-page-down'].fn();bindings['splay-console-page-down'].fn()
+assert(label('new-message'))
+bindings['splay-console-escape'].fn()
+assert(not properties['user-data/splay-console-open'] and not active_request and bindings['splay-chat-enter'] and console_layer.data=='')
+persistent.submit('Esc后的旧稿');assert(count('chat')==2)
+act('message-history');persistent=prompted
+state({room='changed',chat_max_length=20});persistent.submit('旧房间稿')
+assert(count('chat')==2 and not properties['user-data/splay-console-open'])
+state({warning='Buffering or seeking; synchronization is suspended'})
+act('message-history');assert(not label('Buffering') and not label('缓冲'));dismiss()
+
+-- The saved-combination chooser has a real back row. Join is explicit, editing
+-- merely fills the draft, and deletion tracks settings identity across reorder.
+start();credential_init(false);history_reply(history);credential_reply(last('credential-status'),false);act('toggle-enabled')
+act('settings');dismiss();act('profiles');finish(1,'select');assert(selected.prompt:find('设置',1,true));dismiss()
+act('profiles');finish(2,'select');assert(label('‹ 返回连接组合') and label('加入') and label('修改连接信息'))
+finish(1,'select');assert(label('历史房间'));finish(2,'select');finish(3,'select')
+assert(count('connect')==0 and label('历史房间'));dismiss();credential_reply(last('credential-status'),false)
+act('profiles');finish(2,'select');finish(2,'select');credential_reply(last('credential-status'),false)
+assert(count('connect')==1 and last('connect').room=='历史房间')
+
+-- Fixed local offsets require explicit decimal input. Duration differences are
+-- editable candidates, never summed with the current offset or sent on select.
+local peers={{username='self',room='active-room',file={name='self.mkv',duration=500}},
+    {username='peer',room='active-room',file={name='peer.mkv',duration=487.7}}}
+local function offset_fixture()
+    start({history_enabled=false});act('toggle-enabled')
+    prop('path','D:/fixture/self.mkv');prop('duration',500);prop('seekable',true);registered_events['file-loaded']()
+    state({username='self',time_offset=5,members=peers})
+end
+offset_fixture();act('time-offset');assert(label('+5 秒') and label('更换媒体后清零'));dismiss()
+act('offset-plus');assert(last('set-offset').seconds==6)
+state({username='self',time_offset=6,members=peers});act('offset-minus');assert(last('set-offset').seconds==5)
+act('offset-reset');assert(last('set-offset').seconds==0)
+act('offset-input');finish(' -12.25 ');assert(last('set-offset').seconds==-12.25);dismiss()
+local offset_count=count('set-offset')
+for _,invalid_seconds in ipairs({'nan','1e3','86401','-86400.1','0x10','--1',''}) do
+    act('offset-input');finish(invalid_seconds);dismiss();assert(count('set-offset')==offset_count)
+end
+act('offset-duration-list');assert(label('peer · +12.3 秒') and not label('self ·'));dismiss()
+act('offset-duration:peer');assert(prompted.default_text=='+12.3' and count('set-offset')==offset_count)
+finish('+11.75');assert(last('set-offset').seconds==11.75,'candidate is editable and replaces the current offset');dismiss()
+for _,transition in ipairs({'member-file','member-left','member-unseekable','own-duration','own-path','media-reload','room','disconnect-reconnect','temporarily-changed'}) do
+    offset_fixture();act('offset-duration:peer');local candidate=prompted;local before_offset=count('set-offset')
+    local changed=utils.parse_json(utils.format_json(peers))
+    if transition=='member-file' then changed[2].file.name='replacement.mkv';state({username='self',time_offset=5,members=changed})
+    elseif transition=='member-left' then state({username='self',time_offset=5,members={peers[1]}})
+    elseif transition=='member-unseekable' then changed[2].seekable=false;state({username='self',time_offset=5,members=changed})
+    elseif transition=='own-duration' then prop('duration',501)
+    elseif transition=='own-path' then prop('path','D:/fixture/replacement.mkv')
+    elseif transition=='media-reload' then registered_events['start-file']();registered_events['file-loaded']()
+    elseif transition=='room' then state({room='new-room',username='self',time_offset=5,members=peers})
+    elseif transition=='disconnect-reconnect' then state({connection='disconnected',username='self',time_offset=5,members=peers});state({username='self',time_offset=5,members=peers})
+    else prop('duration',501);prop('duration',500) end
+    if candidate.closed then candidate.closed() end;candidate.submit('+12.3')
+    assert(count('set-offset')==before_offset,'stale duration candidate must fail after '..transition)
+end
+offset_fixture();act('offset-duration:peer');dismiss();assert(count('set-offset')==0,'cancel preserves offset')
+state({username='self',members=peers});act('offset-input');assert(count('set-offset')==0,'old core without offset capability cannot apply')
+-- Any unequal raw duration is a mismatch, including a fraction below one ms.
+-- Supply the tiny difference as literal JSON so serializer rounding cannot hide it.
+offset_fixture();local exact=utils.parse_json(utils.format_json(peers))
+handlers['splay-state']('{"schema":1,"connection":"connected","host":"history.example","port":9001,"room":"active-room","username":"self","time_offset":5,"members":[{"username":"peer","room":"active-room","file":{"name":"peer.mkv","duration":500.0000001}}]}')
+assert(display_state().members[1].media.check=='duration_mismatch')
+exact[2].file.duration=500;state({username='self',time_offset=5,members=exact});assert(display_state().members[2].media.check=='duration_match')
+for _,command in ipairs(core()) do
+    if command.action=='set-offset' then assert(command.settings==nil and command.path==nil and command.filename==nil) end
+end
+
+print('UI_FORMS_PASSED default off, Settings and room actions, endpoint editing, encrypted credential commands and stale reply isolation, playlist handoff, 300-event transparent persistent history, stable nickname colours and white body, continuous chat and Esc/stale-room guards, conditional shortcuts, modal generations, saved-profile navigation, preference restore/touch/save, strict durations, editable local offsets and stale candidates, media privacy and lifecycle, overlay replay')
 real_mp.commandv('quit')

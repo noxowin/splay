@@ -69,7 +69,7 @@ def main():
             raise
 
     def latency_rows(snapshot):
-        return {row['username']: row['text'] for row in snapshot.get('room_rows', [])
+        return {row['username']: row['latency'] for row in snapshot.get('room_rows', [])
                 if row.get('kind') == 'member' and row.get('latency')}
 
     try:
@@ -79,21 +79,27 @@ def main():
         state['latency']['enabled'] = True
         snapshot = publish()
         values = latency_rows(snapshot)
-        assert '◷ 42 ms' in values['me'] and '自报' not in values['me']
-        assert '◷ 125 ms' in values['peer'] and '自报' not in values['peer']
-        assert '◷ —' in values['official']
+        assert values['me']=='42 ms' and values['peer']=='125 ms',values
+        assert 'official' not in values
+        members={r['username']:r for r in snapshot['room_rows'] if r['kind']=='member'}
+        assert members['me']['latency_color']=='80E692' and members['peer']['latency_color']=='75DAFF',members
+        state['members'][0]['ready']=False
+        changed=publish()
+        changed_me=next(r for r in changed['room_rows'] if r.get('username')=='me' and r['kind']=='member')
+        assert changed_me['color']!=members['me']['color'] and changed_me['latency_color']==members['me']['latency_color']
+        assert len({r['duration_x'] for r in changed['room_rows'] if r['kind']=='member'})==1
         assert not any(row.get('kind') == 'latency' for row in snapshot['room_rows'])
         assert next(row['text'] for row in snapshot['room_rows'] if row['kind'] == 'room') == 'synthetic'
         state['members'][1]['username'] = 'peer-with-a-very-long-name-' * 8
         values = latency_rows(publish())
-        assert values[state['members'][1]['username']].endswith('◷ 125 ms'), values
+        assert values[state['members'][1]['username']]=='125 ms', values
         state['members'][1]['username'] = 'peer'
         state['latency'].update(rtt_ms=None, reported=False)
         state['members'][1]['latency'].update(rtt_ms=None, stale=True)
         values = latency_rows(publish())
-        assert '◷ —' in values['me'] and '◷ —' in values['peer']
+        assert not values,values
         state['members'][1]['latency'].update(rtt_ms=-10, stale=False)
-        assert '◷ —' in latency_rows(publish())['peer']
+        assert 'peer' not in latency_rows(publish())
         state['latency']['enabled'] = False
         assert not latency_rows(publish())
         state['local_media'] = {'loaded': True, 'title': '本机影片.mp4', 'duration': 120}
@@ -103,7 +109,7 @@ def main():
         media_snapshot = publish()
         summary = next(row['text'] for row in media_snapshot['room_rows']
                        if row['kind'] == 'media-summary' and row['username'] == 'peer')
-        assert '时长不同' in summary and '+12.3 秒' in summary, summary
+        assert '时长不同' in summary and '对方长12.3秒' in summary, summary
         assert not any(row['kind'] == 'autostart' for row in media_snapshot['room_rows'])
         state['autostart'] = {'enabled': True, 'pending': True, 'remaining': 5, 'delay': 5, 'reason': 'countdown', 'participants': 3}
         countdown_snapshot = publish()

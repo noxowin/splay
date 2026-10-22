@@ -1,92 +1,80 @@
-# Windows 预览版安装与使用
+# Install and use splay v0.1.0 on Windows
 
-## 安装到现有 mpv
+**English** · [简体中文](install.zh-CN.md) · [README](https://github.com/noxowin/splay)
 
-1. 退出播放器，找到实际使用的配置目录。常见位置是 `%APPDATA%\mpv`，便携版通常使用 `mpv.exe` 旁的 `portable_config`。
-2. 将包内 **四个文件** `scripts/splay.lua`、`scripts/splay_core.dll`、`scripts/splay_overlay.lua`、`scripts/splay_playlist.lua` 复制到该目录的 `scripts` 文件夹。升级时先备份已有 splay 文件，再全部替换。
-3. 保留原有 `mpv.conf`、`input.conf`、`uosc.conf` 和其他脚本。可从 `script-opts/splay.conf.example` 选取配置写入 `splay.conf`，不要在其中填写密码。
-4. 正常打开视频，按 **Shift+s** 或点击底部同步图标，启用 splay。每个新播放器进程都默认关闭，启用后仍需手动连接。
+## Install or upgrade
 
-Shift+s 是普通绑定，已有 `input.conf` 条目优先。需要明确绑定时添加 `SHIFT+s script-message-to splay splay-open`，使用 uosc 菜单可在末尾加 `uosc`。mpv 原有大写 S 截图键与它相同，可自行选择保留哪个动作。
+1. Download [splay-windows-x64-v0.1.0.zip](https://github.com/noxowin/splay/releases/download/v0.1.0/splay-windows-x64-v0.1.0.zip) from the [v0.1.0 release](https://github.com/noxowin/splay/releases/tag/v0.1.0). Check its SHA256 against the published checksum.
+2. Close mpv and locate its active configuration directory: commonly `%APPDATA%\mpv`, or `portable_config` beside `mpv.exe` for portable installations. Launchers may select another directory.
+3. Copy **all four** files into that directory's `scripts` folder: `splay.lua`, `splay_core.dll`, `splay_overlay.lua`, `splay_playlist.lua`. Back up and replace existing splay files together.
+4. Keep `mpv.conf`, `input.conf`, `uosc.conf` and other scripts. Optional non-secret defaults can be copied from [splay.conf.example](../script-opts/splay.conf.example) into `script-opts/splay.conf`. Never put passwords there.
 
-宿主需要 Windows x64、mpv C 插件支持和 Lua `mp.input`。具体版本见 [验证记录](validation-v6.md)；未保证所有旧版本或 mpv.net 可用。启动器禁用脚本或指定其他配置目录时，需要另外确认加载位置。运行无需 Python、Syncplay 客户端或 LuaSocket。
+Requires Windows x64 mpv with C plugins and Lua `mp.input`. uosc is optional. Python, LuaSocket and a separate Syncplay client are not required at runtime. Tested versions and coverage are in [validation](validation-v0.1.0.md). GitHub's Source code ZIP does not contain a compiled DLL.
 
-## 连接历史与密码记忆
+## Connect and navigate
 
-首次默认服务器 **syncplay.pl:8999**、昵称 **splayuser**，房间为空。启用后选择“加入房间”或“创建房间”，两者共用连接填写页；创建会先要求填写新房名，再点击“创建并进入”。普通房间通过加入该名称建立，同名房间已存在时会加入已有房间；受控房间另见高级房间操作。
+Open media normally, then press **Shift+s** or click the Sync icon. Each new player starts with splay disabled; enable it, fill in a room and connect manually. Initial server: `syncplay.pl:8999`; nickname: `splayuser`; room: empty. Separate players keep separate connections.
 
-服务器和端口在同一行显示，点击后分别编辑，仍能选择各字段历史。首页连接后显示实际服务器和房间、准备状态、共享播放列表、更多及断开连接；成员、消息、自动开播、切换房间和设置在“更多”中，关闭 splay 也在此处。
+Joining an ordinary room name creates it if needed; an existing name joins that room. Connection profiles can be filled, joined, edited, named or deleted. Joining with a saved profile waits for that server's saved credentials. The connected menu provides room functions, shared playlists and **Settings**; members and local time offset are under room functions.
 
-非密码信息保存在配置目录的 `splay-history.json`，包含最后表单、多个完整连接组合和字段历史。空房间草稿也可保存其他字段；旧版 Default 占位值不自动恢复，但可明确选择。若旧 `splay.conf` 有 `room=default`，请删除或改为自己的房间。
+Shift+s is an ordinary binding; `input.conf` can override it. To bind explicitly, use `SHIFT+s script-message-to splay splay-open` (append `uosc` for its menu). This conflicts with mpv's uppercase S screenshot binding, so choose the action you prefer.
 
-连接填写页集中提供服务器、昵称、房间、密码和已保存组合入口，点击连接时记住组合。选择已保存组合后可填入、重命名或确认删除；只填表，不自动连接。连接历史管理中的显式保存会等待存储成功后再提示，密码仍单独按服务器和端口加密保存，不写进组合。
+## Chat and display
 
-设置中的“连接历史管理”也支持清空某字段建议或全部非密码历史。删除组合会清除匹配的上次填写，保留其他字段建议和服务器密码；清空历史不中断当前连接。之后主动编辑表单或连接时仍会保存新的历史。更换视频不清空当前连接；新进程恢复表单但仍默认关闭。历史优先于 `splay.conf` 的初始值，`history_enabled=no` 可关闭读取与保存。
+- **Enter** opens quick chat when connected with media loaded; Enter sends and Esc cancels. Other menus and input fields keep their own keys.
+- **Shift+h**, or Settings → message history, opens a transparent full-window console over the video. Enter sends and keeps the input open; Page Up/Down or the mouse wheel browse history; Esc closes it. History keeps the latest 300 messages in this process, including chat and room/playback events. It is not written to disk. Room changes, disconnecting or disabling splay close the console/input.
+- Settings switches between room chat and scrolling chat. Nicknames use consistent colors and message text stays white. The selected mode is remembered independently of connection profiles when history is enabled. Scrolling text defaults to 15% larger; room-chat text is unchanged.
+- **Smoother scrolling during playback** is off by default. It raises video output cadence with a labeled fps filter while scrolling chat is active, up to 60 fps (or a lower display refresh rate). It duplicates frames rather than interpolating motion and can increase playback load. Turning it off removes splay's own unchanged filter; external filter changes or unsupported output produce a notice.
+- Short messages appear at top left, room/member information at top right. While playing, the room panel follows mouse-idle/cursor settings; it remains visible while paused. Settings can hide status, buttons or room information.
 
-服务器密码默认记忆在独立的 **`splay-credentials.json`** 中，使用 Windows 当前用户 DPAPI 加密，按服务器地址与端口区分。相同服务器切换昵称或房间不需重填；不同端口不会复用。密码设置显示“已加密保存”，可删除该服务器密码，或关闭记忆改为仅本进程使用。关闭记忆时不读取已有密文，也不会自动删除它；重新开启可继续使用。永久关闭使用 `remember_password=no`，与普通历史开关互不影响。
+## Room behavior and readiness
 
-凭据不能作为跨电脑、跨 Windows 账号的便携密码库。文件损坏、保存或解密失败会提示错误，不会静默用空密码重试；可删除对应记忆后重新填写。菜单中的记忆开关只作用于本次进程。文件旁 `.lock` 用于多播放器并发保存。操作员密码仍不记忆。
+**Join pause and leave pause are on by default.** Joining a room requests a room-wide pause; a member leaving the same room, including switching rooms, also requests a pause. Controlled-room playback remains subject to controller permissions. Both options can be disabled in Settings and are remembered independently of connection profiles. These actions preserve the loaded media and its playback arguments.
 
-服务器密码、操作员认证及创建受控房间均使用 Windows 遮罩输入框，Enter 确定、Esc 或关闭窗口取消。交互输入的密码不经过 mpv console，也不进入其输入历史；临时密码仅由原生插件保存，输入框故障不会退回明文输入。显式自动化 API 仍兼容密码参数，调用方应保护本机 IPC，避免把命令写入调试日志。
+**All-ready autostart is on by default.** Once at least two members have media and explicitly report ready, the local player is paused, seekable, at 1× and not buffering, a **five-second countdown** can start. A controlled room additionally requires controller authentication. Settings can disable it; the connection/room boundary reapplies your current preference rather than resetting each state update.
 
-## 断线重连与延迟
+Changing readiness, membership/media, buffering, local playback operations or remote playback cancels a pending countdown. A ready phase fires once; manually pausing does not repeatedly restart it. Withdraw/reapply readiness or explicitly restart the strategy for another attempt. Use one coordinator per room: there is no countdown leader election between clients. Duration equality is not an autostart requirement. Starting playback yourself marks you ready; remote playback does not.
 
-连接设置中的自动重连默认开启，仅用于你主动发起的连接。临时断线后依次等待 2、5、10、30、30 秒，最多尝试五次；连接页显示倒计时和次数，可随时取消。手动断开或关闭 splay 会停止重试；密码/协议拒绝、证书验证失败不会重试或降级 TLS。永久关闭可设置 `auto_reconnect=no`，菜单开关仅对当前进程有效。
+## Duration and local offset
 
-恢复连接时保留当前视频和调用参数，重新加入服务器确认的房间；准备状态、操作员权限和共享列表跟随需重新确认，不会自动恢复授权。新播放器进程仍默认关闭，不因记住连接信息而自动连接。
+Media comparison uses valid **raw duration values**: equal is green, different is red, unknown/self is gray. There is no 2.5-second tolerance or filename-based “likely same media” verdict. Only a mismatch adds a difference line. Colors are independent of readiness and latency, and equal duration does not prove identical content.
 
-显示设置可开启“延迟显示与共享”，默认关闭；持久选项为 `latency_enabled=yes`。数值表示各客户端到服务器的往返耗时（RTT），不是成员之间的直连延迟。自己的值来自同步心跳；其他成员的值是对方上报，需其使用支持该功能的 splay 并开启共享。官方或旧客户端显示“未上报”，失效数据标为过期。
+Room functions and member details offer **local time offset**: enter positive/negative seconds, adjust by one second or reset. Local time = room time + offset; a longer local intro usually needs a positive offset. Changing it moves only your player and cancels its countdown; it does not broadcast a room seek or alter duration comparison. Loading another media clears it; reconnecting or changing rooms with the same media retains it. It is not saved across processes.
 
-开启后约每 10 秒通过服务器分享一次数值，不发送 IP、媒体地址或聊天消息；只在当前房间展示，服务器对元数据的可见范围取决于其房间隔离设置。关闭后停止分享并撤回当前数值。无媒体时不制造文件记录，因此其他人可能暂时看不到你的值。
+Choose a member to prefill **local duration − their duration**, edit the value and confirm. It replaces the current offset rather than adding to it; changed connection/member/media information invalidates a stale suggestion. Different endings or multiple edits cannot be solved by a single fixed offset: align against the actual picture or use matching media.
 
-## 状态、聊天与消息历史
+If an offset places your player outside the available media, it pauses locally before reaching EOF and keeps the room clock. Reset the offset or let the room reach the available segment to resume following. This local boundary pause does not pause the room or report the clamped position to others.
 
-- **左上角**：连接、成员、准备、播放、跳转与聊天消息，默认约 5 秒后消失。聊天最多显示 4 条。
-- **右上角**：房间名，每位成员的准备状态、文件、时长和同片提示，以及共享列表当前项。已准备为绿色，未准备为红色。开启延迟时，用户名后显示 `◷` 和毫秒数，无有效数据时显示短横线。长片名最多两行并保留尾部，成员过多时显示剩余人数，详情从成员菜单查看。
-- **沉浸播放**：播放时根据鼠标活动和 mpv 的 `cursor-autohide` / `cursor-autohide-fs-only` 设置隐藏右栏；暂停时保持显示。此功能不修改鼠标设置。关闭 splay 后不显示状态。
-- **聊天**：连接成功后出现同步图标旁的聊天图标。已加载媒体时按 Enter 也可输入，再按 Enter 发送，Esc 取消。关闭 splay、未连接或其他菜单正在输入时保留原有 Enter 行为。
-- **消息记录**：按 **Shift+h** 或进入菜单查看本进程最近 300 条消息，包括聊天、连接、进退房、播放、跳转、准备和列表变化。切换房间、断开不清空历史；退出播放器后清空，不写磁盘。Shift+h 是非强制绑定，可用 `SHIFT+h script-message-to splay splay-action message-history` 明确绑定。
+## Shared playlists and network media
 
-用户主动取消暂停会自动变为已准备；远端同步导致的播放不会替用户准备。
+The room playlist is separate from mpv's local queue. Receiving it or joining a room does not load another item. Ordinary room members and controlled-room controllers can edit/select items; other controlled-room members may only follow.
 
-## 全员准备后自动开播
+Add local filenames, bind an item to a local file, import the local queue, sort or remove items. Only local filenames are shared, not full paths. Sharing the current HTTP(S) address or importing network queue entries requires an explicit confirmation before sending complete addresses to the room. Do not share a private or authenticated URL unintentionally. Displayed addresses omit credentials/query parameters; the confirmed shared address itself is complete.
 
-连接后在“更多 → 全员准备后自动开播”中开启，默认关闭。当前房间至少两人，完整成员列表中所有人明确已准备且载入媒体，本机暂停、1x、可跳转且无缓冲时，开始 **5 秒倒计时**。受控房间还要求本机已经通过操作员认证。倒计时在状态区显示，主菜单可立即取消。
+Local matching uses the known queue/current directory or an explicit binding; it does not recursively scan disks or automatically open remote absolute paths or other protocols. **Local following is off by default**, and resets on room changes. Enable it to follow room selections and advance at end of media, or explicitly play the current room item locally. Unfamiliar HTTP(S) addresses require individual confirmation before opening; an identical address already in your local queue or confirmed in this process can be reused.
 
-有人撤回准备、成员或媒体变动、本机操作播放/暂停/跳转、开始缓冲、远端先播放等都会取消当前倒计时。一次全员准备阶段只触发一次，手动暂停后不会反复开播；再次启动需成员撤回准备后重新准备，或明确选择重新开启。换房、断开和重连都会将该选项关闭。
+Limits: 250 entries, 10,000 Unicode characters total, and the server's 16 KiB protocol-line limit including encoding and usernames. Room persistence depends on the server; local bindings last only for this process. Playlists do not transfer media, and watched markers are not implemented.
 
-这是本机发起的开播策略，建议同房仅一人开启；多个客户端之间不做倒计时主机选举。官方客户端无需安装 splay，照常接收播放同步。开播条件不包含“同片检查通过”，成员仍需确认自己的媒体。
+## History, passwords and reconnecting
 
-## 视频时长与同片检查
+`splay-history.json` stores non-secret fields, named connection profiles and the chat/join/leave preferences. History management can remove profiles, field suggestions or all non-password history without disconnecting. Clearing connection history does not remove separately stored passwords. `history_enabled=no` disables history reads/saves; saved history otherwise takes precedence over initial defaults.
 
-成员详情显示双方时长、精确秒数、差值及名称依据。时长差 **超过 2.5 秒** 提示不同；阈值内按可用名称区分疑似同片、时长一致或名称不同。隐藏名称、未知时长、未载入媒体均保守提示，不能判定相同。
+Server passwords use masked Windows dialogs and are remembered by server/port in `splay-credentials.json`, encrypted with the current Windows user's DPAPI. They bypass mpv console history and are not copied into profiles. `remember_password=no` uses process memory only and leaves existing encrypted files in place. Saved credentials are not portable across Windows accounts/computers. Storage/decryption failures are reported rather than silently retried with an empty password. Controller passwords are not remembered. Do not publish these files or private logs.
 
-检查只比较元数据，不读取文件内容或计算媒体哈希，也不保证同一剪辑版本。默认隐藏上报文件名时，通常只能比较时长。本机优先显示可靠媒体标题，网络流没有标题时显示“网络媒体”，不把鉴权 URL 当作片名。标题与比对详情仅本机显示，不额外发给服务器。
+Automatic reconnect is on by default for connections you initiated. Temporary failures retry after 2, 5, 10, 30 and 30 seconds; disconnecting, disabling or canceling stops retries. Authentication/protocol rejection and certificate failure do not retry or downgrade TLS. Reconnecting retains media and its arguments; it does not restore controller authorization, readiness or playlist-follow permission. A new player still never auto-connects.
 
-显示设置可临时隐藏状态或按钮；持久配置为 `status_osd=no`、`button_enabled=no`。`room_panel=no` 只隐藏右栏。`overlay_chat_ttl`、`overlay_message_ttl` 调整消息时长。独立图标偏移默认 `button_bottom=48`、`button_right=22`；旧版 `button_bottom=85` 可删除。uosc 内嵌位置由其布局决定。
+Latency display/sharing is on by default (`latency_enabled=yes`). Values measure each client's round trip to the server, not peer-to-peer latency. Peers must report supported metadata; missing values hide the signal indicator and old values may be marked stale. Sharing runs about every ten seconds while connected, without IPs or media URLs; without media there may be no file metadata to attach. Settings can stop sharing. Defaults for reconnect/autostart/latency and display may be set in `splay.conf`; unlike chat/join/leave preferences, their menu changes apply to the current process.
 
-## 房间共享播放列表
+## Controlled rooms, TLS and uosc
 
-主菜单打开“共享播放列表”。它与 mpv 本机队列分开，不传视频，不因收到列表或加入房间自动换片。
+Create/join a Syncplay controlled room and authenticate as controller to restrict room playback and playlist edits. A base room name is limited to 21 characters; a controller password uses the `AB-123-456` format. Others join the full controlled-room name returned by the server. Server and controller passwords use masked dialogs.
 
-普通房间成员或受控房间操作员可以添加当前本机文件名、明确导入本机队列、手动添加文件名或公开 HTTP(S) 地址、删除、排序、清空和选择房间播放项。导入只发送本机文件名，跳过网络媒体，不上传完整本机路径或调用方私密地址。手动添加公开地址会把完整地址发送给房间所有人。
+Non-1× playback suspends synchronization; loading/buffering operations are not broadcast as user actions. Unseekable media cannot be aligned. Real browser authentication chains, live streams and ad timelines have limited coverage; check [validation](validation-v0.1.0.md).
 
-选集时先等待服务器确认，再加载本机匹配的文件。默认从已知本机队列、当前文件目录查找；名称不同可进入该项“绑定到本机文件”。绑定只保存在当前进程，不发送本机路径。不会递归扫描硬盘，也不会自动打开远端提供的绝对路径或其他协议。
+TLS `prefer` permits plaintext only when the server explicitly lacks TLS; `require` rejects plaintext; `off` disables TLS. Handshake/certificate failure never downgrades. The current transport uses Windows Schannel TLS 1.2 and system trust with cached certificate-chain checks.
 
-**本机跟随默认关闭**，新进程或换房后需重新开启。开启后可跟随房间选集，并在当前片结束时推进到可匹配的下一项；受控房间普通成员只能跟随，不能推动全房选集。关闭跟随仍可明确选择“在本机播放房间当前项”。陌生 HTTP(S) 地址必须逐项确认；已在本机播放队列中的同一地址或当前进程已确认的地址可再次使用。显示会省略 URL 认证信息与查询参数。
+Native mpv menus work independently of uosc. Set `ui=uosc` or send `script-message-to splay splay-open uosc` for its menu. When a readable controls layout exists, splay adds `button:splay` and a connected chat button for this process, preserving other buttons and leaving `uosc.conf` untouched. Otherwise it uses standalone icons.
 
-当前列表上限 250 项、总计 10000 个 Unicode 字符，同时遵守官方 1.7.6 的 16 KiB 单行协议上限，包含服务端返回的用户名和编码开销；超限会报错。共享列表不是持久化收藏夹，房间内容是否保留由服务器决定；本机不另存列表。已观看标记尚未实现。
+## Remove splay
 
-## 房间控制、TLS 和 uosc
-
-普通房间成员可同步播放。需房主控制时，创建或加入 Syncplay 受控房间，再认证操作员。创建基础房间名最多 21 字符，操作员密码格式 `AB-123-456`；服务器返回完整受控房间名，其他人使用该名称加入。普通成员不能控制房间播放或编辑列表。
-
-连接与换房保留当前媒体、字幕、音轨及平台参数。断开后可继续本地播放，也可手动连接。非 1x 播放暂停同步，加载和缓冲期间不传播本地操作；不可跳转媒体无法对齐。真实浏览器鉴权链、直播及广告时间轴尚未验证。
-
-TLS `prefer` 先协商加密，只在服务器明确不支持时允许明文；`require` 拒绝明文；`off` 主动关闭 TLS。证书或握手失败不会降级。当前使用 Windows Schannel TLS 1.2 和系统信任，证书链检查只用缓存。
-
-uosc 可选，原生面板可独立使用。设置 `ui=uosc` 或发送 `script-message-to splay splay-open uosc` 可打开 uosc 菜单。可读取 controls 布局时，splay 在当前进程加入 `button:splay`，连接后加入相邻 `button:splay-chat`，保留其他按钮、不写 uosc.conf。缺少可读布局时使用独立图标；可自行把按钮放入 controls。
-
-## 卸载
-
-退出播放器，只删除上述四个 splay 运行文件，以及你为 splay 创建的配置、按钮或快捷键条目。不再需要记忆时可单独删除 `splay-history.json`、`splay-credentials.json` 及各自 `.lock`。不要删除整个配置目录或其他脚本。
+Close mpv and remove only its four runtime files and any splay-only configuration/key/button entries you added. Optionally remove `splay-history.json`, `splay-credentials.json` and their `.lock` files. Keep the rest of your player configuration.

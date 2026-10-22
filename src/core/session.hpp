@@ -11,6 +11,7 @@ namespace splay {
     struct Playback {
         bool loaded=false, paused=true, buffering=false, seekable=true;
         double position=0, duration=0, speed=1;
+        std::string public_name;
     };
     struct Correction {
         std::optional<double> position;
@@ -31,7 +32,7 @@ namespace splay {
         void disconnected(const std::string& error="",bool retryable=false);
         bool retryable() const { return retryable_; }
         void receive(const std::string& line,double now);
-        void command(const Json& command);
+        void command(const Json& command,double now=0);
         void playback(const Playback& value);
         void local_change(bool seek,double now);
         void media_changed();
@@ -64,6 +65,15 @@ namespace splay {
         std::deque<double> sentPings_;
         std::map<std::string,LatencyReport> latencyReports_;
         Playback local_;
+        // This media's local clock is room time + timeOffset_. Connection and
+        // room changes keep the offset; only a media lifecycle change resets it.
+        double timeOffset_=0,roomPosition_=0,roomPositionTime_=0;
+        bool offsetBoundaryHold_=false;
+        bool haveRoomPosition_=false,haveRoomState_=false,roomPaused_=true;
+        bool pauseOnLeave_=true,pauseOnJoin_=true;
+        bool roomJoinPending_=true,roomPausePending_=false,roomPauseAlign_=false,emptyRoomState_=false;
+        bool roomPauseForJoin_=false,roomPauseForLeave_=false;
+        bool roomPolicyBaseline_=false;
         bool autostartEnabled_=false,autostartPending_=false,autostartBlocked_=false,autostartResetSeen_=false;
         bool membersComplete_=false,autostartAuthenticated_=false,autostartReadinessSupported_=false;
         int autostartDelay_=5,autostartRemaining_=0;
@@ -80,7 +90,13 @@ namespace splay {
         void playback_event(const Json&,double);
         void reset_sync();
         void state(const Json&,double);
-        void reply(const Json& ping,bool change=false,bool seek=false);
+        void reply(const Json& ping,bool change=false,bool seek=false,std::optional<double> pause_position={});
+        void request_room_pause(bool align=false,bool join=false);
+        bool update_room_policy();
+        double room_position() const;
+        double local_position(double room_position) const;
+        bool offset_outside(double room_position) const;
+        void follow_room_position(double position,bool paused,bool force_seek=false);
         void set(const Json&);
         void playlist(const Json&,bool index);
         void clear_playlist();

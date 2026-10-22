@@ -1,6 +1,7 @@
 #define MPV_CPLUGIN_DYNAMIC_SYM
 #include "../../third_party/mpv/client.h"
 #include "../core/session.hpp"
+#include "../core/media_name.hpp"
 #include "../core/history.hpp"
 #include "../core/credentials.hpp"
 #include "../core/reconnect.hpp"
@@ -25,6 +26,13 @@ namespace {
         int v=fallback;
         if(mpv_get_property(h,p,MPV_FORMAT_FLAG,&v)<0)return fallback;
         return v!=0;
+    }
+    std::string get_text(mpv_handle* h,const char* property){
+        char* value=mpv_get_property_string(h,property);
+        if(!value)return {};
+        std::string result(value);
+        mpv_free(value);
+        return result;
     }
     std::string secret_token(){
         unsigned char bytes[16];
@@ -62,7 +70,12 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
         } password_token;
         double suppress_until=0,next_sample=0;
         bool pending_seek=false;
-        bool loading=false;
+        // The plugin can attach to an existing player. Bootstrap only from a
+        // demuxer that is already loaded; later files require FILE_LOADED.
+        bool loading=get_flag(h,"idle-active",true)||get_text(h,"file-format").empty();
+        std::string loaded_path=loading?std::string():get_text(h,"path");
+        std::string public_name,pending_name;
+        double pending_name_since=0;
         std::optional<double> expected_seek;
         std::optional<bool> expected_pause;
         bool running=true,have_previous=false;
@@ -102,7 +115,9 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
             mpv_command(h,args);
         };
         session.apply=[&](const splay::Correction& c){
-            if(c.paused){
+            // Pause before a boundary seek; resume only after restoring a
+            // valid position, so an old endpoint cannot race into EOF.
+            if(c.paused&&*c.paused){
                 expected_pause=c.paused;
                 int p=*c.paused;
                 mpv_set_property(h,"pause",MPV_FORMAT_FLAG,&p);
@@ -112,16 +127,43 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                 double p=*c.position;
                 mpv_set_property(h,"time-pos",MPV_FORMAT_DOUBLE,&p);
             }
+            if(c.paused&&!*c.paused){
+                expected_pause=c.paused;
+                int p=0;
+                mpv_set_property(h,"pause",MPV_FORMAT_FLAG,&p);
+            }
         };
         auto sample=[&](){
             splay::Playback p;
-            p.loaded=!loading&&!get_flag(h,"idle-active",true)&&!get_flag(h,"eof-reached");
+            const auto path=get_text(h,"path");
+            p.loaded=!loading&&!loaded_path.empty()&&path==loaded_path&&
+                !get_flag(h,"idle-active",true)&&!get_flag(h,"eof-reached");
             p.position=get_number(h,"time-pos");
             p.duration=get_number(h,"duration");
             p.paused=get_flag(h,"pause",true);
             p.buffering=get_flag(h,"paused-for-cache")||get_flag(h,"seeking");
             p.seekable=get_flag(h,"seekable");
             p.speed=get_number(h,"speed",1);
+            if(p.loaded){
+                std::string name;
+                const bool network=splay::network_media_path(path)||get_flag(h,"demuxer-via-network");
+                if(!network)name=splay::local_media_name(path);
+                else{
+                    const auto filename=get_text(h,"filename"),stem=get_text(h,"filename/no-ext");
+                    // Metadata and media-title belong to the loaded demuxer.
+                    // Never derive a network title from path or URL segments.
+                    name=splay::network_media_name(get_text(h,"metadata/by-key/title"),filename,stem,true);
+                    if(name.empty())name=splay::network_media_name(get_text(h,"metadata/by-key/TITLE"),filename,stem,true);
+                    if(name.empty())name=splay::network_media_name(get_text(h,"media-title"),filename,stem);
+                }
+                const double sampled_at=clock_now();
+                if(name!=pending_name){pending_name=name;pending_name_since=sampled_at;}
+                // Metadata can arrive after FILE_LOADED or fluctuate during
+                // probing. Publish only stable changes, once per new value.
+                if(!network||sampled_at-pending_name_since>=.5)public_name=pending_name;
+                p.public_name=public_name;
+                if(get_text(h,"path")!=path){p.loaded=false;p.public_name.clear();}
+            }
             session.playback(p);
             return p;
         };
@@ -150,7 +192,8 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
             if(event->event_id==MPV_EVENT_SHUTDOWN)break;
             if(event->event_id==MPV_EVENT_START_FILE || event->event_id==MPV_EVENT_END_FILE){
                 loading=true;
-                    splay::Playback empty;
+                loaded_path.clear();public_name.clear();pending_name.clear();pending_name_since=now;
+                splay::Playback empty;
                 session.playback(empty);
                 session.media_changed();
                 have_previous=false;
@@ -160,7 +203,9 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                 suppress_until=now+1;
             }
             if(event->event_id==MPV_EVENT_FILE_LOADED){
-                    loading=false;
+                loading=false;
+                loaded_path=get_text(h,"path");
+                public_name.clear();pending_name.clear();pending_name_since=now;
                 suppress_until=now+1;
                 have_previous=false;
                 sample();
@@ -306,7 +351,8 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                                 cancel_secret();
                                 password_token.clear();
                             }
-                            session.command(c);
+                            if(action=="set-offset")sample();
+                            session.command(c,now);
                         }
                     }
                     catch(const std::exception& exception){

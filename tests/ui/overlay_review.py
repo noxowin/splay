@@ -293,7 +293,8 @@ for mode in (('native','uosc') if args.mode=='all' else (args.mode,)):
         assert any(r['kind']=='playlist' and '1 / 2' in r['text'] for r in rows), rows
         assert not any(r['kind']=='playlist-file' for r in rows),'Current media should not be repeated below the list state'
         assert next(r['text'] for r in rows if r['kind']=='room')=='周末电影',rows
-        assert any(r['kind']=='media-summary' and '待确认' in r['text'] for r in rows),rows
+        assert not any(r['kind']=='media-summary' for r in rows),rows
+        assert all(r.get('duration') for r in rows if r['kind']=='member'),rows
         # Enriched media remains local to presentation and preserves uncertainty.
         long_title='A.Movie.With.A.Useful.Long.Release.Name.'*4+'.mp4'
         player.state(local_media={'loaded':True,'title':long_title,'duration':123},
@@ -301,11 +302,51 @@ for mode in (('native','uosc') if args.mode=='all' else (args.mode,)):
                               {'username':'同伴','room':'周末电影','media':{'loaded':True,'title':long_title,'duration':150,'check':'duration_mismatch','duration_delta':27}}])
         media_rows=player.geometry()['room_rows']
         own_file=[r['text'] for r in media_rows if r['kind']=='file' and r['username']=='本机用户']
-        assert len(own_file)==2 and own_file[-1].endswith('.mp4'),media_rows
-        assert len(''.join(own_file))>40,media_rows
-        assert any(r['kind']=='media-summary' and '00:02:03' in r['text'] and '待确认' not in r['text'] for r in media_rows),media_rows
-        assert any(r['kind']=='media-summary' and '时长不同' in r['text'] and '+27 秒' in r['text'] for r in media_rows),media_rows
+        assert len(own_file)==1 and own_file[0].endswith('…') and long_title.startswith(own_file[0][:-1]),media_rows
+        assert len(own_file[0])>40,media_rows
+        own_member=next(r for r in media_rows if r['kind']=='member' and r['username']=='本机用户')
+        own_title=next(r for r in media_rows if r['kind']=='file' and r['username']=='本机用户')
+        assert own_member['duration']=='00:02:03' and own_title['file_right']==own_member['duration_x'],media_rows
+        assert next(r for r in media_rows if r['kind']=='member' and r['username']=='同伴')['duration_color']=='7777FF',media_rows
+        assert any(r['kind']=='media-summary' and '时长不同' in r['text'] and '对方长27秒' in r['text'] for r in media_rows),media_rows
         player.capture('media-check-delta')
+        # Scrolling mode keeps the existing video filter chain unless the
+        # explicit smooth option is enabled. Exercise the real fps filter,
+        # ownership, mode changes and console suppression during playback.
+        player.cmd('vf','append','@fixture-user:hflip')
+        original_filters=player.get('vf')
+        player.state(settings={'chat_mode':'danmaku','danmaku_smooth':False})
+        player.cmd('set_property','pause',False)
+        player.event(type='chat',id='scroll-first',username='朋友',text='播放中的弹幕：昵称有颜色，消息是白色',chat_color='B9E8FF')
+        assert player.geometry()['chat_count']==1 and player.get('vf')==original_filters
+        player.capture('danmaku-playing')
+        player.state(settings={'chat_mode':'danmaku','danmaku_smooth':True})
+        time.sleep(.5)
+        smooth_filters=player.get('vf')
+        assert sum(f.get('label')=='splay-chat-fps' for f in smooth_filters)==1,smooth_filters
+        assert next(f for f in smooth_filters if f.get('label')=='fixture-user')==original_filters[0]
+        fps_deadline=time.monotonic()+5
+        while player.get('estimated-vf-fps',0)<50:
+            assert time.monotonic()<fps_deadline,player.get('estimated-vf-fps')
+            time.sleep(.1)
+        player.capture('danmaku-playing-smooth')
+        player.cmd('set_property','pause',True)
+        player.capture('danmaku-paused')
+        player.cmd('set_property','user-data/splay-console-open',True)
+        time.sleep(.15)
+        assert player.geometry()['chat_count']==0 and not player.geometry()['room_panel_visible']
+        player.cmd('set_property','user-data/splay-console-open',False)
+        player.state(settings={'chat_mode':'room','danmaku_smooth':True})
+        assert player.get('vf')==original_filters,player.get('vf')
+        # Do not take ownership of an existing filter with our label.
+        player.cmd('vf','append','@splay-chat-fps:vflip')
+        foreign_filters=player.get('vf')
+        player.state(settings={'chat_mode':'danmaku','danmaku_smooth':True})
+        player.state(enabled=False,settings={'chat_mode':'room','danmaku_smooth':False})
+        assert player.get('vf')==foreign_filters,player.get('vf')
+        player.cmd('vf','remove','@splay-chat-fps')
+        player.cmd('vf','remove','@fixture-user')
+        player.state(settings={'chat_mode':'room','danmaku_smooth':False})
         # The countdown is current state, not a stream of notifications.
         auto={'enabled':True,'delay':5,'pending':True,'remaining':5,'reason':'countdown','participants':3}
         player.state(autostart=auto)
@@ -359,7 +400,7 @@ for mode in (('native','uosc') if args.mode=='all' else (args.mode,)):
         ]:
             player.state(playlist={'files':[url],'index':0})
             item=next(r['text'] for r in player.geometry()['room_rows'] if r['kind']=='playlist-file')
-            assert item.strip()==label, (url,item)
+            assert item.strip()==('网络媒体（名称未提供）' if '://' in url else label), (url,item)
             assert 'SECRET' not in item and 'PRIVATE' not in item and 'u:p' not in item
         assert player.action()==action_before
         player.state(playlist={'files':['https://u:p@h/v.mp4?token=SECRET#PRIVATE'],'index':0})

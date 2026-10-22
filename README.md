@@ -3,26 +3,29 @@
 [![Windows build](https://github.com/noxowin/splay/actions/workflows/windows.yml/badge.svg)](https://github.com/noxowin/splay/actions/workflows/windows.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-为现有 mpv 添加 Syncplay 同步播放、房间、聊天与共享播放列表，无需额外运行 Syncplay 客户端。
+Syncplay-compatible rooms, synchronized playback, chat and shared playlists inside your existing mpv. No separate Syncplay client required.
 
-**[下载 Windows x64 预览版](https://github.com/noxowin/splay/releases/tag/v0.1.0-preview.6)** · [安装与使用](docs/install.md) · [更新记录](CHANGELOG.md) · [问题反馈](https://github.com/noxowin/splay/issues)
+**English** · [简体中文](README.zh-CN.md)
 
-当前版本 **v0.1.0-preview.6**，仍处于开发预览阶段。splay 是独立项目，并非 Syncplay 或 mpv 的官方发行版。
+**[Download v0.1.0 for Windows x64](https://github.com/noxowin/splay/releases/download/v0.1.0/splay-windows-x64-v0.1.0.zip)** · [Release](https://github.com/noxowin/splay/releases/tag/v0.1.0) · [Install & use](docs/install.md) · [Changelog](CHANGELOG.md) · [Report an issue](https://github.com/noxowin/splay/issues)
 
-## 功能
+splay is an independent project, not an official mpv or Syncplay distribution. It synchronizes playback; everyone supplies their own media.
 
-- 与 Syncplay 服务器及官方客户端同步播放、暂停和跳转；支持成员、准备状态与受控房间。
-- 可选的全员准备后 5 秒倒计时开播；成员时长、差值与保守的同片提示。
-- 播放器内聊天、近期消息历史；左上角显示短时消息，右上角显示房间信息，播放时随鼠标闲置隐藏。
-- 多组连接信息支持命名、删除和历史清理；密码用 Windows 遮罩输入框填写，并可加密保存。
-- 房间共享播放列表：添加、导入本机队列、排序、选集，以及可选的本机跟随和播完下一项。
-- 每次启动默认关闭，按需启用；支持独立图标菜单与可选的 uosc 控制条入口。
-- 临时断线自动重连，可随时取消；可选显示自己和其他 splay 成员上报的服务器往返延迟。
+## Features
 
-## 快速开始
+- Sync play, pause and seek with Syncplay servers and official clients; view members, readiness and controlled-room permissions.
+- Five-second all-ready countdown and server latency display/sharing, enabled by default after you connect.
+- Quick chat with Enter; transparent, full-window message history with Shift+h, continuous chat input and colored nicknames.
+- Switch between room chat and scrolling chat; remember the selected mode. Optional smoother scrolling is off by default.
+- Compare exact reported durations and adjust a local time offset, including an editable suggestion from another member's duration.
+- Share playlists, match local files and explicitly confirm network addresses; local following starts off.
+- Named connection profiles, masked password entry, Windows-encrypted password memory and bounded reconnect attempts.
+- Independent mpv interface with optional uosc integration. Each player starts with splay disabled and connects only when requested.
 
-1. 下载 Release 中的 `splay-windows-x64-preview6.zip`，关闭播放器。
-2. 将包内以下四个文件放入 mpv **实际配置目录**下的 `scripts` 文件夹；升级时全部替换，不覆盖其他配置。
+## Quick start
+
+1. Download the ZIP above and check its SHA256 against the release checksum. Close mpv.
+2. Copy all four files into the `scripts` folder of mpv's **active configuration directory**. Replace all four when upgrading:
 
    ```text
    scripts/splay.lua
@@ -31,32 +34,15 @@
    scripts/splay_playlist.lua
    ```
 
-3. 正常打开视频，按 **Shift+s** 或点击底部同步图标，启用 splay 并连接房间。默认服务器为 `syncplay.pl:8999`、昵称为 `splayuser`，房间需自行填写或选择。
-4. 连接后按 **Enter** 输入聊天，再按 Enter 发送，Esc 取消；**Shift+h** 查看本次进程的消息历史。
+3. Open your video normally. Press **Shift+s** or click the Sync icon, enable splay, enter a room and connect. Initial server: `syncplay.pl:8999`; nickname: `splayuser`; no default room.
+4. Press **Enter** to type/send a quick message, **Esc** to cancel, or **Shift+h** for message history and continuous chat. Open **Settings** for chat mode and room behavior.
 
-便携版配置通常位于 `mpv.exe` 旁的 `portable_config`。完整安装、校验与快捷键冲突处理见 [使用指南](docs/install.md)。GitHub 的 Source code 压缩包不含已编译 DLL。
+Portable mpv commonly uses `portable_config` next to `mpv.exe`; other installations commonly use `%APPDATA%\mpv`. Keep your existing player configuration. GitHub's Source code archives do not include the compiled DLL.
 
-同步不传输视频，各成员需自行获取媒体。加入房间保留当前视频和调用参数；共享列表的本机跟随默认关闭，未知网络地址需逐项确认。
+By default, joining a room requests a room-wide pause, and a member leaving the same room also requests a pause, subject to controlled-room permissions. Both options can be disabled in Settings and are remembered. Joining keeps the current media and playback arguments. Playlist following is off by default; sharing or opening unfamiliar network addresses requires explicit confirmation.
 
-## 界面
+## Compatibility and development
 
-以下截图使用合成测试视频。
+Requires Windows x64 mpv with C-plugin and Lua `mp.input` support; uosc is optional. Exact tested versions, validation results and remaining limits are recorded in [v0.1.0 validation](docs/validation-v0.1.0.md). Support for every mpv build, player distribution or browser authentication flow is not implied.
 
-![连接后的简洁菜单](docs/images/compact-menu.png)
-
-<details>
-<summary>查看状态、聊天与共享播放列表</summary>
-
-![准备状态、播放提示与聊天](docs/images/status-chat.png)
-
-![共享播放列表](docs/images/shared-playlist.png)
-
-</details>
-
-## 兼容与开发
-
-需要支持 C 插件和 `mp.input` 的 Windows x64 mpv；uosc 可选。已测 mpv 0.41 开发构建、uosc 5.12/5.13 与 Syncplay 1.7.6，具体版本和限制见 [验证记录](docs/validation-v6.md)。完整整合包、真实浏览器鉴权链及最低兼容版本尚未全面验证。
-
-构建与测试见 [贡献指南](CONTRIBUTING.md)，内部接口见 [架构说明](docs/architecture.md)。[上游兼容说明](docs/upstream-compatibility.md) 介绍官方更新对本项目的影响。
-
-原创代码采用 [GPL-3.0-only](LICENSE)；第三方组件保留各自许可，见 [第三方声明](THIRD_PARTY_NOTICES.md)。安全问题请按 [SECURITY.md](SECURITY.md) 反馈。
+See [Contributing](CONTRIBUTING.md), [Architecture](docs/architecture.md) and [Upstream compatibility](docs/upstream-compatibility.md). Original code is [GPL-3.0-only](LICENSE); third-party files retain their licenses in [Third-party notices](THIRD_PARTY_NOTICES.md). Report security issues as described in [SECURITY.md](SECURITY.md).

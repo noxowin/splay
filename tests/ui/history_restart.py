@@ -1,4 +1,4 @@
-"""Auto-load the real DLL and Lua in three isolated mpv processes."""
+"""Restore connection drafts and local preferences across three real mpv processes."""
 from pathlib import Path
 import argparse
 import json
@@ -9,8 +9,9 @@ import subprocess
 root=Path(__file__).resolve().parents[2]
 parser=argparse.ArgumentParser()
 parser.add_argument('--mpv',type=Path,default=root/'.local/mpv/runtime/mpv.exe')
+parser.add_argument('--output',type=Path,default=root/'.local/ui-history-restart')
 opts=parser.parse_args()
-config=root/'.local/ui-history-restart'
+config=opts.output.resolve()
 (config/'scripts').mkdir(parents=True,exist_ok=True)
 (config/'script-opts').mkdir(exist_ok=True)
 for source in (root/'build/splay_core.dll',root/'scripts/splay.lua',root/'scripts/splay_overlay.lua',root/'scripts/splay_playlist.lua'):
@@ -19,8 +20,19 @@ for source in (root/'build/splay_core.dll',root/'scripts/splay.lua',root/'script
 fixture=dict(host='restored.example',port=9009,username='重启昵称',room='重启房间',tls='require')
 other=dict(host='other.example',port=8999,username='other',room='other-room',tls='off')
 path=config/'splay-history.json'
-path.write_text(json.dumps(dict(schema=1,last=fixture,profiles=[other,fixture],values={})),encoding='utf8')
+suggestions={key:[other[key],fixture[key]] for key in ('host','port','username','room','tls')}
+path.write_text(json.dumps(dict(schema=1,last=fixture,profiles=[other,fixture],values=suggestions)),encoding='utf8')
 blank=dict(fixture,room='')
+def preferences(alternate):
+    return dict(chat_mode='danmaku' if alternate else 'room',pause_on_leave=not alternate,pause_on_join=not alternate)
+def command_payloads(text,target,message):
+    for line in text.splitlines():
+        if f'target="{target}", args="{message}"' not in line:
+            continue
+        match=re.search(r'args="((?:\\.|[^"\\])*)"\]\s*$',line)
+        if match:
+            yield json.loads(json.loads('"'+match.group(1)+'"'))
+results=[]
 for number,stage in enumerate(('profile','draft','restart'),1):
     log_path=config/f'run-{number}.log'
     try:
@@ -41,6 +53,15 @@ for number,stage in enumerate(('profile','draft','restart'),1):
     assert 'Lua error' not in text and 'stack traceback' not in text,text
     data=json.loads(path.read_text(encoding='utf8'))
     assert data['last']==(fixture if stage=='profile' else blank),data
+    assert data['preferences']==preferences(stage=='profile'),data
+    restored=preferences(stage=='draft')
+    saved=preferences(stage=='profile')
+    overlay_states=list(command_payloads(text,'splay_overlay','splay-state'))
+    assert any(all(value.get('settings',{}).get(key)==expected for key,expected in restored.items()) for value in overlay_states),('restored settings absent',stage)
+    assert any(value.get('enabled') and all(value.get('settings',{}).get(key)==expected for key,expected in saved.items()) for value in overlay_states),('saved settings absent',stage)
+    native_states=list(command_payloads(text,'splay','splay-state'))
+    assert any(all(value.get('room_policy',{}).get(key)==saved[key] for key in ('pause_on_leave','pause_on_join')) for value in native_states),('native pause policy absent',stage)
+    assert 'HISTORY_PREFERENCES_RESTORED ' in text and 'HISTORY_PREFERENCES_SAVED ' in text,text
     assert data['profiles']==[other,fixture],data
     assert data['values']['room']==[other['room'],fixture['room']],data
     for key in ('host','port','username','tls'):
@@ -49,4 +70,6 @@ for number,stage in enumerate(('profile','draft','restart'),1):
     # Debug command records prove neither restore nor blocked blank actions reach connect.
     assert not re.search(r'"action"\s*:\s*"(?:connect|room)"',text.replace('\\"','"')),text
     assert '"connection":"connecting"' not in text.replace('\\"','"'),text
-print('UI history restart: real DLL/Lua auto-loaded in three isolated mpv processes; saved fields restored over old config, clearing room persisted through restart, completed profiles and room suggestions preserved, every player starts disabled, blank connect blocked, no reconnect')
+    results.append(dict(stage=stage,passed=True,preferences_restored=restored,preferences_saved=saved))
+(config/'result.json').write_text(json.dumps(dict(passed=True,real_dll=True,processes=3,stages=results),indent=2),encoding='utf8')
+print('UI history restart: 3/3 real DLL/Lua processes passed; connection drafts restored, room clearing preserved, completed profiles retained; danmaku/disabled join-and-leave pause saved and restored, room/default pause saved and restored; overlay settings and native room policy verified; every player starts disabled, shortcuts restored, blank connect blocked, no reconnect')

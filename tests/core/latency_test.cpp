@@ -9,6 +9,7 @@ struct Fixture {
     Session s;
     std::vector<Json> sent,events;
     Fixture(bool loaded=true){
+        s.command({{"action","room-policy"},{"pause_on_join",false},{"pause_on_leave",false}});
         s.send=[&](const Json& value){sent.push_back(value);};
         s.event=[&](const Json& value){events.push_back(value);};
         Playback media;media.loaded=loaded;media.duration=300;s.playback(media);

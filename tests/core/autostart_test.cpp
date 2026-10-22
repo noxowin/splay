@@ -11,6 +11,7 @@ struct Fixture {
     std::vector<Correction> applied;
     std::string room="room";
     Fixture(bool managed=false,bool readiness=true){
+        s.command({{"action","room-policy"},{"pause_on_join",false},{"pause_on_leave",false}});
         if(managed)room="+ctl:ABCDEFGHIJKL";
         s.send=[&](const Json& j){sent.push_back(j);};
         s.event=[&](const Json& j){events.push_back(j);};

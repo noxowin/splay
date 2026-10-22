@@ -56,4 +56,13 @@ text=result.stdout.decode('utf-8',errors='replace')
 assert result.returncode==0 and 'UI_FORMS_PASSED' in text,text
 assert 'Lua error' not in text and 'stack traceback' not in text,text
 print(text)
-(opts.output/'result.json').write_text(json.dumps({'passed':True,'native':True,'uosc':True,'forms':True,'network_mocked':True},indent=2),encoding='utf-8')
+playlist_config=opts.output/'playlist-forms'
+playlist_config.mkdir(exist_ok=True)
+result=run_player([str(mpv),'--no-config','--load-scripts=no','--config-dir='+str(playlist_config),'--idle=yes','--vo=null','--ao=null',
+    '--script='+str(root/'tests/ui/playlist_forms.lua'),'--script-opts=playlist_forms-source='+str(root/'scripts/splay_playlist.lua')])
+text=result.stdout.decode('utf-8',errors='replace')
+(opts.output/'playlist-forms.log').write_text(text,encoding='utf-8')
+assert result.returncode==0 and 'PLAYLIST_FORMS_PASSED' in text,text
+assert 'Lua error' not in text and 'stack traceback' not in text,text
+print(text)
+(opts.output/'result.json').write_text(json.dumps({'passed':True,'native':True,'uosc':True,'forms':True,'playlist_forms':True,'network_mocked':True},indent=2),encoding='utf-8')

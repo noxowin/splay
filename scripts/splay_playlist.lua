@@ -7,6 +7,8 @@ local state = {enabled=false,connection='disconnected',playlist={files={}}}
 local received, follow, generation, loaded_epoch = false, false, 0, 0
 local known, ambiguous, bindings, approved_urls = {}, {}, {}, {}
 local pending, pending_timer, selected, confirmation, eof_token
+local share_preview
+local media_titles={}
 local loaded_path=mp.get_property_native('path')
 local current_ui, page, menu_open, menu_epoch = 'native', 'home', false, 0
 local native_input=false
@@ -18,7 +20,10 @@ end
 local function plain(value)
     local text=tostring(value or '')
     if text:lower():match('^https?://') then
-        text=text:gsub('[?#].*$', ''):gsub('^(%a+://)[^/]*@', '%1')..' [网络地址]'
+        local title=media_titles[text]
+        local host=text:match('^%a+://([^/%?#]+)') or ''
+        host=host:gsub('^.*@','')
+        text=title or ('网络媒体'..(host~='' and ' · '..host or ''))
     end
     text=text:gsub('[%c{}\\]', ' ')
     if #text>240 then
@@ -76,7 +81,11 @@ local function remember(path)
     known[name]=path
 end
 local function collect()
-    for _,entry in ipairs(mp.get_property_native('playlist') or {}) do remember(entry.filename) end
+    for _,entry in ipairs(mp.get_property_native('playlist') or {}) do
+        remember(entry.filename)
+        if network(entry.filename) and type(entry.title)=='string' and entry.title~='' and #entry.title<=1024 and
+            not entry.title:find('[/\\:?=#%%]') and not entry.title:find('[%c]') then media_titles[entry.filename]=entry.title end
+    end
     remember(mp.get_property_native('path'))
 end
 local function resolve(ref)
@@ -154,7 +163,33 @@ local function copy_files()
     local result={};for i,value in ipairs(files()) do result[i]=value end;return result
 end
 local function append(ref)
-    local result=copy_files();result[#result+1]=ref;set_files(result)
+    local result=copy_files()
+    for _,item in ipairs(result) do if item==ref then notice('此项目已在共享列表中');return end end
+    result[#result+1]=ref;set_files(result)
+end
+local function prepare_share(queue)
+    collect()
+    local candidates=queue and (mp.get_property_native('playlist') or {}) or {{filename=mp.get_property_native('path')}}
+    local items,seen,network_count,skipped,duplicates={},{},0,0,0
+    for _,ref in ipairs(files()) do seen[ref]=true end
+    for _,entry in ipairs(candidates) do
+        local ref,path
+        if network(entry.filename) then ref=entry.filename
+        else
+            path=local_path(entry.filename)
+            local name=path and basename(path)
+            if name and safe_name(name) and existing(path) then ref=name end
+        end
+        if not ref then skipped=skipped+1
+        elseif seen[ref] then duplicates=duplicates+1
+        else
+            seen[ref]=true;items[#items+1]=ref
+            if network(ref) then network_count=network_count+1 end
+        end
+    end
+    if #items==0 then notice(duplicates>0 and '所选项目已在共享列表中' or '没有可共享的文件或 HTTP(S) 媒体');return end
+    share_preview={generation=generation,items=items,network_count=network_count,skipped=skipped,duplicates=duplicates}
+    show(nil,'share')
 end
 local function selected_valid()
     return selected and selected.generation==generation and files()[selected.index+1]==selected.file
@@ -173,6 +208,21 @@ local function play(i,change_room)
 end
 local function entry(title,value,selectable) return {title=title,value=value,selectable=selectable~=false} end
 local function rows()
+    if page=='share' and share_preview then
+        local preview=share_preview
+        local result={entry('‹ 返回','home'),entry('将添加 '..#preview.items..' 项','noop',false)}
+        if preview.network_count>0 then
+            result[#result+1]=entry(preview.network_count..' 个网络项目将共享完整地址','noop',false)
+            result[#result+1]=entry('地址中的访问参数也会发送；不附带请求头或 Cookie','noop',false)
+        end
+        if preview.skipped+preview.duplicates>0 then
+            result[#result+1]=entry('跳过 '..preview.skipped..' 项；去重 '..preview.duplicates..' 项','noop',false)
+        end
+        for i=1,math.min(#preview.items,5) do result[#result+1]=entry(plain(preview.items[i]),'noop',false) end
+        if #preview.items>5 then result[#result+1]=entry('另有 '..(#preview.items-5)..' 项','noop',false) end
+        result[#result+1]=entry('确认共享到房间','share-confirm')
+        return result
+    end
     if page=='url' and confirmation then return {
         entry('‹ 取消','home'),entry(plain(confirmation.file),'noop',false),
         entry('确认打开此网络地址（仅本次进程允许此项）','approve-url')}
@@ -188,9 +238,9 @@ local function rows()
     if page=='item' and selected_valid() then
         local i=selected.index
         local result={entry('‹ 返回列表','list'),entry(plain(selected.file),'noop',false)}
-        if can_control() then result[#result+1]=entry('播放此项并选择为房间播放项','select')
+        if can_control() then result[#result+1]=entry('播放此项（同步到房间）','select')
         elseif index()==i then result[#result+1]=entry('在本机播放房间当前项','play-current') end
-        result[#result+1]=entry('绑定到本机文件…','bind')
+        if not network(selected.file) then result[#result+1]=entry('绑定到本机文件…','bind') end
         if can_control() then
             result[#result+1]=entry('删除此项','remove')
             result[#result+1]=entry('上移','up',i>0)
@@ -199,22 +249,18 @@ local function rows()
         return result
     end
     if page=='edit' then return {
-        entry('‹ 返回共享播放列表','home'),entry('添加当前本机文件名','add-current'),
-        entry('导入 mpv 本机队列文件名…','import-preview'),entry('手动添加文件名…','add-manual'),
-        entry('添加公开 HTTP(S) 地址（将共享给房间）…','add-url'),entry('清空共享列表…','clear-preview')}
-    end
-    if page=='import' then return {
-        entry('‹ 取消','edit'),entry('仅分享本机文件名；跳过网络地址和不安全名称','noop',false),
-        entry('确认将本机队列添加到共享列表','import')}
+        entry('‹ 返回共享播放列表','home'),entry('导入 mpv 播放队列…','import-preview'),
+        entry('手动添加文件名…','add-manual'),entry('添加网络地址…','add-url'),entry('清空共享列表…','clear-preview')}
     end
     if page=='clear' then return {entry('‹ 取消','edit'),entry('确认清空房间共享列表','clear')} end
     local i=index()
     local result={entry('‹ 返回 splay','back'),
-        entry('房间当前项: '..(i and (i+1)..' / '..#files() or '未选择 / '..#files()),'list'),
-        entry('浏览列表 / 选择 / 绑定本机文件','list'),
-        entry('在本机播放房间当前项','play-current',i~=nil),
-        entry('跟随房间切换 / EOF 下一项: '..(follow and '开启' or '关闭（默认）'),'follow',available())}
-    if can_control() then result[#result+1]=entry('添加 / 导入 / 编辑列表','edit')
+        entry('播放列表 · '..#files()..' 项'..(i and ' · 当前第 '..(i+1)..' 项' or ''),'list'),
+        entry('跟随房间 / 播完下一项: '..(follow and '开启' or '关闭'),'follow',available())}
+    if i then result[#result+1]=entry('播放房间当前项','play-current') end
+    if can_control() then
+        result[#result+1]=entry(network(mp.get_property_native('path')) and '共享当前网络媒体…' or '添加当前文件','add-current')
+        result[#result+1]=entry('导入 / 手动添加 / 清空','edit')
     elseif available() then result[#result+1]=entry('受控房间：只有操作员可以编辑和选项','noop',false) end
     if not available() then result[#result+1]=entry(state.enabled and '请连接支持共享列表的服务器' or '请先开启 splay','noop',false) end
     return result
@@ -262,7 +308,7 @@ end
 action=function(value)
     if value=='back' then close();mp.commandv('script-message-to','splay','splay-open',current_ui);return end
     if value=='noop' then return end
-    if value=='home' or value=='list' then confirmation=nil;show(nil,value);return end
+    if value=='home' or value=='list' then confirmation=nil;share_preview=nil;show(nil,value);return end
     if not state.enabled then notice('请先开启 splay');return end
     local gen,item=value:match('^item:(%d+):(%d+)$')
     if gen then
@@ -301,23 +347,20 @@ action=function(value)
         end);return
     end
     if not can_control() then notice('只有房间操作员可以更改共享列表或选择房间播放项');return end
-    if value=='edit' then show(nil,'edit')
+    if value=='share-confirm' then
+        local preview=share_preview;share_preview=nil
+        if not preview or preview.generation~=generation then notice('房间或列表已变化，请重新选择要共享的项目');show(nil,'home');return end
+        local result=copy_files()
+        for _,ref in ipairs(preview.items) do result[#result+1]=ref end
+        set_files(result);show(nil,'home')
+    elseif value=='edit' then show(nil,'edit')
     elseif value=='add-current' then
         local path=mp.get_property_native('path')
-        if network(path) then notice('当前是网络媒体；请使用手动添加公开地址明确共享');return end
+        if network(path) then prepare_share(false);return end
         path=local_path(path);local name=path and basename(path)
         if not name or not safe_name(name) or not existing(path) then notice('当前没有可添加的本机文件');return end
         remember(path);append(name)
-    elseif value=='import-preview' then show(nil,'import')
-    elseif value=='import' then
-        local result,skipped=copy_files(),0
-        collect()
-        for _,entry in ipairs(mp.get_property_native('playlist') or {}) do
-            local path=local_path(entry.filename);local name=path and basename(path)
-            if name and safe_name(name) and existing(path) then result[#result+1]=name else skipped=skipped+1 end
-        end
-        set_files(result)
-        if skipped>0 then notice('已跳过 '..skipped..' 个网络地址或不可用本机项目') end
+    elseif value=='import-preview' or value=='import' then prepare_share(true)
     elseif value=='add-manual' then
         prompt('添加共享文件名（本机路径请通过“绑定”设置）',function(ref)
             if not safe_name(ref) then notice('请输入单个文件名；网络地址请使用公开地址入口');return end
@@ -326,7 +369,10 @@ action=function(value)
     elseif value=='add-url' then
         prompt('添加公开 HTTP(S) 地址（完整地址将发给房间所有人）',function(ref)
             if not network(ref) then notice('仅支持有效的公开 HTTP(S) 地址');return end
-            append(ref)
+            for _,item in ipairs(files()) do if item==ref then notice('此项目已在共享列表中');return end end
+            share_preview={generation=generation,items={ref},network_count=1,skipped=0,duplicates=0}
+            local pending_share=share_preview
+            mp.add_timeout(.03,function() if share_preview==pending_share and pending_share.generation==generation then show(nil,'share') end end)
         end)
     elseif value=='clear-preview' then show(nil,'clear')
     elseif value=='clear' then set_files({});show(nil,'home')
@@ -352,7 +398,7 @@ mp.register_script_message('splay-state',function(json)
     local identity_changed=not received or state.enabled~=incoming.enabled or state.connection~=incoming.connection
         or state.host~=incoming.host or state.port~=incoming.port or state.room~=incoming.room or state.username~=incoming.username
     local list_changed=old_files~=utils.format_json(incoming.playlist.files)
-    if identity_changed or list_changed then generation=generation+1;clear_pending();selected=nil;confirmation=nil end
+    if identity_changed or list_changed then generation=generation+1;clear_pending();selected=nil;confirmation=nil;share_preview=nil end
     if identity_changed then
         follow=false;eof_token=nil
         if menu_open or native_input then
@@ -376,6 +422,7 @@ mp.register_script_message('splay-state',function(json)
     publish()
     if menu_open then
         if page=='url' and not confirmation then page='home' end
+        if page=='share' and not share_preview then page='home' end
         if page=='item' and not selected_valid() then page='list' end
         if current_ui=='uosc' then
             mp.commandv('script-message-to','uosc','update-menu',utils.format_json(model()))

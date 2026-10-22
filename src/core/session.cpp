@@ -1,4 +1,5 @@
 #include "session.hpp"
+#include "media_name.hpp"
 #include <cmath>
 #include <regex>
 #include <stdexcept>
@@ -61,25 +62,9 @@ namespace splay {
             std::string name;
             auto filename=j.find("name");
             if(filename!=j.end()&&filename->is_string()){
-                name=filename->get<std::string>();
-                // Keep public filenames useful without exposing a peer's full
-                // path, URL credentials, query parameters or control codes.
-                name=name.substr(0,name.find_first_of("?#"));
-                auto scheme=name.find("://");
-                if(scheme!=name.npos){
-                    auto path=name.find('/',scheme+3);
-                    name=path==name.npos?"":name.substr(path+1);
-                }
-                auto slash=name.find_last_of("/\\");
-                if(slash!=name.npos)name=name.substr(slash+1);
-                std::string clean;
-                size_t count=0;
-                for(unsigned char ch:name){
-                    if(ch<32||ch==127)continue;
-                    if((ch&0xc0)!=0x80&&++count>250)break;
-                    clean+=static_cast<char>(ch);
-                }
-                name=std::move(clean);
+                // A peer may send its full path. Keep only a safe local
+                // basename; a URL never becomes a filename fallback.
+                name=peer_media_name(filename->get<std::string>());
             }
             double size=0;
             auto bytes=j.find("size");
@@ -202,6 +187,12 @@ namespace splay {
         rtt_=0;
         pending_state_=nullptr;
         eventBaseline_=false;
+        haveRoomPosition_=false;
+        haveRoomState_=false;
+        roomJoinPending_=pauseOnJoin_;
+        roomPausePending_=roomPauseAlign_=emptyRoomState_=false;
+        roomPauseForJoin_=roomPauseForLeave_=false;
+        roomPolicyBaseline_=false;
         reset_latency();
     }
     void Session::reset_latency(){
@@ -230,6 +221,42 @@ namespace splay {
         if(disable){autostartEnabled_=false;autostartReason_="disabled";}
         if(pending)publish_event({{"type","autostart"},{"action","cancelled"},{"reason",reason}});
     }
+    void Session::request_room_pause(bool align,bool join){
+        cancel_autostart("waiting-reset");
+        roomPausePending_=true;
+        roomPauseAlign_=roomPauseAlign_||align;
+        if(align||join)roomPauseForJoin_=true;else roomPauseForLeave_=true;
+        update_room_policy();
+    }
+    bool Session::update_room_policy(){
+        if(!logged_||roomJoinPending_||!roomPausePending_||!haveRoomPosition_||!haveRoomState_)return false;
+        // Controller metadata in a List is not authentication. Only the
+        // server's successful controllerAuth for this connection permits an
+        // automatic room control, just like the automatic-start policy.
+        const bool canPause=!controlled()||(controller_&&autostartAuthenticated_);
+        if(!canPause&&!roomPauseAlign_){roomPausePending_=roomPauseForJoin_=roomPauseForLeave_=false;return false;}
+        if(roomPauseAlign_&&local_.loaded&&
+           (local_.buffering||!local_.seekable||!std::isfinite(local_.speed)||std::abs(local_.speed-1)>=.001))return false;
+        const double position=std::max(0.0,room_position());
+        const bool align=roomPauseAlign_&&local_.loaded;
+        const bool paused=canPause?true:roomPaused_;
+        Correction correction;
+        if(!align&&local_.paused!=(offsetBoundaryHold_||paused)){
+            correction.paused=offsetBoundaryHold_||paused;local_.paused=*correction.paused;
+        }
+        const bool broadcast=canPause&&!roomPaused_;
+        roomPausePending_=roomPauseAlign_=false;
+        roomPauseForJoin_=roomPauseForLeave_=false;
+        if(align)follow_room_position(position,paused,true);
+        else if((correction.position||correction.paused)&&apply)apply(correction);
+        // Never derive this report from the joining player's old position,
+        // or from a media position clamped by its offset/duration boundary.
+        if(broadcast){
+            roomPosition_=position;roomPositionTime_=now_;roomPaused_=true;
+            reply(Json::object(),true,false,position);
+        }
+        return broadcast;
+    }
     void Session::update_autostart(bool expire){
         const auto before=Json::array({autostartPending_,autostartRemaining_,autostartReason_});
         const auto snapshot=autostart_members();
@@ -248,10 +275,10 @@ namespace splay {
         else if(!logged_)reason="disconnected";
         else if(!autostartReadinessSupported_)reason="unsupported";
         else if(controlled()&&(!controller_||!autostartAuthenticated_))reason="no-permission";
-        else if(!membersComplete_||!snapshot.contains(user_))reason="waiting-snapshot";
+        else if(!membersComplete_||!snapshot.contains(user_)||roomJoinPending_||roomPausePending_)reason="waiting-snapshot";
         else if(snapshot.size()<2)reason="waiting-members";
         else if(!allReady)reason="waiting-ready";
-        else if(!local_.loaded||!local_.paused||local_.buffering||!local_.seekable||!std::isfinite(local_.speed)||std::abs(local_.speed-1)>=.001)reason="waiting-media";
+        else if(!local_.loaded||!local_.paused||local_.buffering||!local_.seekable||offsetBoundaryHold_||!std::isfinite(local_.speed)||std::abs(local_.speed-1)>=.001)reason="waiting-media";
         if(autostartPending_&&!reason.empty())cancel_autostart(reason);
         if(autostartEnabled_&&autostartBlocked_&&membersComplete_){
             // Only explicit readiness (false/unknown), with a complete room,
@@ -292,7 +319,14 @@ namespace splay {
     void Session::playback(const Playback& value){
         const bool status_changed=local_.loaded!=value.loaded||local_.buffering!=value.buffering||local_.seekable!=value.seekable||
             (std::abs(local_.speed-1)<.001)!=(std::abs(value.speed-1)<.001);
+        const auto name=value.loaded?public_media_name(value.public_name):std::string();
+        const bool title_changed=local_.loaded&&value.loaded&&local_.public_name!=name;
         local_=value;
+        local_.public_name=name;
+        // A late title is a metadata update, not a new playback session. Do
+        // not reset seek correction, readiness or the local countdown here.
+        if(title_changed&&logged_)file(false);
+        update_room_policy();
         update_autostart();
         if(status_changed)notify();
     }
@@ -412,7 +446,6 @@ namespace splay {
         if(logged_){
             if(!local_.loaded)warning="Waiting for media; synchronization is suspended";
             else if(std::abs(local_.speed-1)>.001)warning="Synchronization requires playback speed 1.0; synchronization is suspended";
-            else if(local_.buffering)warning="Buffering or seeking; synchronization is suspended";
             else if(!local_.seekable)warning="Media is not seekable; position synchronization is unavailable";
         }
         Json members=Json::array();
@@ -440,6 +473,9 @@ namespace splay {
             ,{"playlist",playlist_}
             ,{"error",error_}
             ,{"warning",warning}
+            ,{"time_offset",timeOffset_}
+            ,{"time_offset_boundary",offsetBoundaryHold_}
+            ,{"room_policy",{{"pause_on_leave",pauseOnLeave_},{"pause_on_join",pauseOnJoin_}}}
             ,{"latency",ownLatency}
             ,{"members",members}
             ,{"autostart",{{"enabled",autostartEnabled_},{"delay",autostartDelay_},{"pending",autostartPending_},
@@ -509,13 +545,18 @@ namespace splay {
         }
     }
     void Session::media_changed(){
+        timeOffset_=0;
+        offsetBoundaryHold_=false;
+        haveRoomPosition_=false;
+        haveRoomState_=false;
         cancel_autostart("waiting-reset");
         update_autostart();
         first_=true;
         if(logged_)file();
+        notify();
     }
     void Session::file(bool refresh_list){
-        Json value=local_.loaded?Json{{"name","**Hidden filename**"},{"duration",local_.duration},{"size",0}}:Json::object();
+        Json value=local_.loaded?Json{{"name",local_.public_name.empty()?"**Hidden filename**":local_.public_name},{"duration",local_.duration},{"size",0}}:Json::object();
         latencyPublished_=false;
         if(local_.loaded&&latencyEnabled_&&rttSample_&&now_-rttReceived_<30){
             if(latencySession_.empty())latencySession_=latency_session();
@@ -581,11 +622,14 @@ namespace splay {
             auto v=item.value();
             if(!v.is_object())continue;
             const bool known=members_.count(item.key())!=0;
+            const bool baseline=roomPolicyBaseline_&&!roomJoinPending_;
             if(!known&&!(v.contains("event")&&v["event"].is_object()&&flag(v["event"],"joined")))membersComplete_=false;
             Json old=known?members_[item.key()]:Json::object();
-            if(v.contains("event")&&v["event"].is_object()&&v["event"].contains("left")){
+            if(v.contains("event")&&v["event"].is_object()&&flag(v["event"],"left")){
                 members_.erase(item.key());
                 latencyReports_.erase(item.key());
+                if(baseline&&known&&item.key()!=user_&&old.value("room",std::string())==room_&&pauseOnLeave_)
+                    request_room_pause();
                 if(known)publish_event({{"type","user"},{"action","left"},{"username",item.key()},{"room",old.value("room",room_)}});
                 continue;
             }
@@ -598,6 +642,14 @@ namespace splay {
             member(item.key(),r,v,file_update,known||(v.contains("event")&&v["event"].is_object()&&flag(v["event"],"joined")));
             auto current=members_.find(item.key());
             if(current==members_.end())continue;
+            if(baseline&&item.key()!=user_){
+                const bool wasHere=known&&old.value("room",std::string())==room_;
+                const bool isHere=r==room_;
+                const bool joined=v.contains("event")&&v["event"].is_object()&&flag(v["event"],"joined");
+                if(wasHere&&!isHere&&pauseOnLeave_)request_room_pause();
+                else if(!wasHere&&isHere&&(known||(joined&&v.contains("room")&&v["room"].is_object()))&&pauseOnJoin_)
+                    request_room_pause(false,true);
+            }
             if(autostartPending_){
                 const bool previouslyHere=known&&old.value("room",std::string())==room_;
                 const bool currentlyHere=r==room_;
@@ -676,6 +728,10 @@ namespace splay {
                 }
             }
             );
+            // The server broadcasts room switches through Set.user and need
+            // not echo Set.room. Obtain the complete new-room membership
+            // snapshot explicitly before the join policy can follow State.
+            emit({{"List",nullptr}});
         }
         if(j.contains("playlistChange"))playlist(j["playlistChange"],false);
         if(j.contains("playlistIndex"))playlist(j["playlistIndex"],true);
@@ -763,7 +819,18 @@ namespace splay {
                     }
                 }
                 if(!members_.count(user_)||members_[user_].value("room",std::string())!=room_)membersComplete_=false;
+                if(membersComplete_)roomPolicyBaseline_=true;
                 for(auto i=latencyReports_.begin();i!=latencyReports_.end();)if(!members_.count(i->first))i=latencyReports_.erase(i);else ++i;
+                if(membersComplete_&&roomJoinPending_){
+                    roomJoinPending_=false;
+                    if(autostart_members().size()>1)request_room_pause(true);
+                    else{
+                        // A new ordinary empty room adopts its first player's
+                        // clock. Its initial server zero is not a seek command.
+                        emptyRoomState_=!haveRoomState_&&!controlled();
+                        if(!controlled()){haveRoomPosition_=haveRoomState_=false;first_=false;reply(Json::object());}
+                    }
+                }
             }
             if(logged_&&j.contains("State")&&j["State"].is_object())state(j["State"],now);
             update_autostart();
@@ -773,7 +840,42 @@ namespace splay {
             disconnected("Invalid server protocol message");
         }
     }
-    void Session::reply(const Json& ping,bool change,bool seek){
+    double Session::room_position() const {
+        return roomPosition_+(roomPaused_?0:std::max(0.0,now_-roomPositionTime_));
+    }
+    double Session::local_position(double room_position) const {
+        double position=std::max(0.0,room_position+timeOffset_);
+        if(std::isfinite(local_.duration)&&local_.duration>0){
+            const double end=offset_outside(room_position)?local_.duration-std::min(1.0,local_.duration/2):local_.duration;
+            position=std::min(position,end);
+        }
+        return position;
+    }
+    bool Session::offset_outside(double position) const {
+        if(!timeOffset_)return false;
+        const double target=position+timeOffset_;
+        // Stop just before EOF, including the small interval between player
+        // sampling and the next correction. Seeking to duration would unload
+        // the demuxer and destroy the media-scoped offset/reference clock.
+        return target<0||(std::isfinite(local_.duration)&&local_.duration>0&&
+            target>=local_.duration-std::min(.25,local_.duration/2));
+    }
+    void Session::follow_room_position(double position,bool paused,bool force_seek){
+        const bool boundary=offset_outside(position);
+        const bool boundary_changed=boundary!=offsetBoundaryHold_;
+        const double target=local_position(position);
+        Correction correction;
+        const bool local_paused=boundary||paused;
+        if(local_.paused!=local_paused){correction.paused=local_paused;local_.paused=local_paused;}
+        if(local_.seekable&&(force_seek||first_||boundary_changed||std::abs(local_.position-target)>1.5)){
+            correction.position=target;local_.position=target;
+        }
+        offsetBoundaryHold_=boundary;
+        if((correction.position||correction.paused)&&apply)apply(correction);
+        first_=false;
+        if(boundary_changed)notify();
+    }
+    void Session::reply(const Json& ping,bool change,bool seek,std::optional<double> pause_position){
         sentPings_.push_back(now_);
         while(sentPings_.size()>32)sentPings_.pop_front();
         Json s={
@@ -785,13 +887,26 @@ namespace splay {
             }
         };
         if(ping.is_object()&&ping.contains("latencyCalculation")&&ping["latencyCalculation"].is_number())s["ping"]["latencyCalculation"]=ping["latencyCalculation"];
-        if(local_.loaded&&!local_.buffering&&std::abs(local_.speed-1)<.001&&(change||!clientIgnore_||serverIgnore_)){
-            s["playstate"]={
-                {"position",local_.position}
-                ,{"paused",local_.paused}
-            };
-            if(seek)s["playstate"]["doSeek"]=true;
+        // A missing segment cannot be represented by a local playback time.
+        // Upstream still resets its watcher timestamp on a ping-only reply,
+        // so omitting position would repeatedly freeze our last reported
+        // clock and make this watcher hold the whole room back. Mirror the
+        // authoritative room clock/pause while locally held instead.
+        const double target=haveRoomPosition_?room_position()+timeOffset_:local_.position;
+        const bool outside=offsetBoundaryHold_||(haveRoomPosition_&&offset_outside(room_position()))||target<0;
+        if(!roomJoinPending_&&!roomPausePending_&&local_.loaded&&!local_.buffering&&std::abs(local_.speed-1)<.001&&(change||!clientIgnore_||serverIgnore_)){
+            if(!change&&timeOffset_&&outside){
+                if(haveRoomState_)s["playstate"]={{"position",std::max(0.0,room_position())},{"paused",roomPaused_}};
+            }
+            else{
+                s["playstate"]={
+                    {"position",std::max(0.0,local_.position-timeOffset_)}
+                    ,{"paused",local_.paused}
+                };
+                if(seek)s["playstate"]["doSeek"]=true;
+            }
         }
+        if(pause_position)s["playstate"]={{"position",*pause_position},{"paused",true}};
         if(change)++clientIgnore_;
         if(serverIgnore_)s["ignoringOnTheFly"]["server"]=serverIgnore_;
         if(clientIgnore_)s["ignoringOnTheFly"]["client"]=clientIgnore_;
@@ -804,7 +919,7 @@ namespace splay {
     void Session::state(const Json& s,double now){
         if(s.contains("playstate")&&s["playstate"].is_object()){
             const auto& play=s["playstate"];
-            if(play.contains("paused")&&play["paused"].is_boolean()&&number(play,"position",-1)>=0&&
+            if(play.contains("paused")&&play["paused"].is_boolean()&&std::isfinite(number(play,"position",NAN))&&
                ((autostartPending_&&!flag(play,"paused"))||flag(play,"doSeek")||local_.paused!=flag(play,"paused")))cancel_autostart("waiting-reset");
         }
         if(s.contains("ignoringOnTheFly")&&s["ignoringOnTheFly"].is_object()){
@@ -833,23 +948,28 @@ namespace splay {
         if(!clientIgnore_&&s.contains("playstate")&&s["playstate"].is_object()){
             auto& p=s["playstate"];
             if(p.contains("position")&&p["position"].is_number()&&p.contains("paused")&&p["paused"].is_boolean()){
-                double pos=number(p,"position",-1);
+                double pos=number(p,"position",NAN);
                 bool paused=flag(p,"paused");
-                if(pos>=0)playback_event(p,now);
-                if(pos>=0&&local_.loaded&&!local_.buffering&&std::abs(local_.speed-1)<.001){
+                if(std::isfinite(pos)&&emptyRoomState_){
+                    emptyRoomState_=false;
+                    reply(ping);
+                    return;
+                }
+                if(std::isfinite(pos)){
+                    playback_event(p,now);
                     if(!paused)pos+=std::min(rtt_/2,1.0);
-                    Correction c;
-                    if(local_.paused!=paused)c.paused=paused;
-                    if(local_.seekable&&(first_||flag(p,"doSeek")||std::abs(local_.position-pos)>1.5)){
-                        c.position=pos;
-                        local_.position=pos;
-                    }
-                    if(c.paused)local_.paused=*c.paused;
-                    if((c.position||c.paused)&&apply)apply(c);
-                    first_=false;
+                    roomPosition_=pos;
+                    roomPositionTime_=now;
+                    roomPaused_=paused;
+                    haveRoomPosition_=true;
+                    haveRoomState_=true;
+                }
+                if(std::isfinite(pos)&&!roomJoinPending_&&!roomPausePending_&&local_.loaded&&!local_.buffering&&std::abs(local_.speed-1)<.001){
+                    follow_room_position(pos,paused,flag(p,"doSeek"));
                 }
             }
         }
+        update_room_policy();
         reply(ping);
     }
     void Session::playback_event(const Json& p,double now){
@@ -877,6 +997,18 @@ namespace splay {
     }
     void Session::local_change(bool seek,double now){
         now_=std::max(now_,now);
+        // An explicit later gesture supersedes a deferred membership pause.
+        // Recovery from buffering itself does not call this gesture path.
+        roomPausePending_=roomPauseAlign_=roomPauseForJoin_=roomPauseForLeave_=false;
+        if(offsetBoundaryHold_&&!seek){
+            cancel_autostart("waiting-reset");
+            if(local_.loaded&&haveRoomPosition_)follow_room_position(room_position(),roomPaused_);
+            update_autostart();return;
+        }
+        // Until the server acknowledges a local gesture, its previous clock
+        // snapshot may no longer describe the current playback position.
+        haveRoomPosition_=false;
+        haveRoomState_=false;
         cancel_autostart("waiting-reset");
         update_autostart();
         // Only the adapter's explicit local pause-change path reaches this.
@@ -885,7 +1017,7 @@ namespace splay {
             readyRequested_=true;
             emit({{"Set",{{"ready",{{"isReady",true},{"manuallyInitiated",true}}}}}});
         }
-        if(logged_&&local_.loaded&&!local_.buffering&&std::abs(local_.speed-1)<.001&&(!controlled()||controller_))reply(Json::object(),true,seek);
+        if(logged_&&!roomJoinPending_&&!roomPausePending_&&local_.loaded&&!local_.buffering&&std::abs(local_.speed-1)<.001&&(!controlled()||controller_))reply(Json::object(),true,seek);
     }
     void Session::tick(double now){
         const auto previous=latency(user_);
@@ -895,11 +1027,49 @@ namespace splay {
         if((logged_||connection_=="connecting")&&lastReceive_>0&&now-lastReceive_>12.5)disconnected("Server timed out",true);
         if(logged_&&latencyEnabled_&&local_.loaded&&rttSample_&&
            ((!latencyPublished_&&now_-rttReceived_<30)||(latencyPublished_&&now_-lastLatencyShare_>=10)))file(false);
+        if(timeOffset_&&haveRoomPosition_&&!roomJoinPending_&&!roomPausePending_&&local_.loaded&&
+           !local_.buffering&&std::abs(local_.speed-1)<.001&&(offsetBoundaryHold_||offset_outside(room_position())))
+            follow_room_position(room_position(),roomPaused_);
         update_autostart(true);
         if(expired||previous!=latency(user_))notify();
     }
-    void Session::command(const Json& c){
+    void Session::command(const Json& c,double now){
+        if(std::isfinite(now))now_=std::max(now_,now);
         auto a=str(c,"action");
+        if(a=="room-policy"){
+            if(!c.contains("pause_on_leave")||!c["pause_on_leave"].is_boolean()||
+               !c.contains("pause_on_join")||!c["pause_on_join"].is_boolean())
+                throw std::runtime_error("Invalid room pause preferences");
+            pauseOnLeave_=c["pause_on_leave"].get<bool>();
+            pauseOnJoin_=c["pause_on_join"].get<bool>();
+            if(!pauseOnJoin_){roomJoinPending_=roomPauseForJoin_=roomPauseAlign_=false;}
+            if(!pauseOnLeave_)roomPauseForLeave_=false;
+            roomPausePending_=roomPauseForJoin_||roomPauseForLeave_;
+            notify();return;
+        }
+        if(a=="set-offset"){
+            if(!c.contains("seconds")||!c["seconds"].is_number())throw std::runtime_error("Time offset must be a number from -86400 to 86400 seconds");
+            const double offset=c["seconds"].get<double>();
+            if(!std::isfinite(offset)||std::abs(offset)>86400)throw std::runtime_error("Time offset must be a number from -86400 to 86400 seconds");
+            if(offset!=timeOffset_){
+                const double position=(haveRoomPosition_||offsetBoundaryHold_)?room_position():local_.position-timeOffset_;
+                if(!haveRoomPosition_){
+                    // Preserve this reference even if the new offset clamps
+                    // playback, so reverting an offset also works offline.
+                    roomPosition_=position;
+                    roomPositionTime_=now_;
+                    if(!offsetBoundaryHold_)roomPaused_=local_.paused;
+                    haveRoomPosition_=true;
+                }
+                timeOffset_=offset;
+                cancel_autostart("waiting-reset");
+                update_autostart();
+                if(local_.loaded&&local_.seekable){
+                    follow_room_position(position,roomPaused_,true);
+                }
+            }
+            notify();return;
+        }
         if(a=="autostart"){
             if(!c.contains("enabled")||!c["enabled"].is_boolean())throw std::runtime_error("Invalid automatic-start preference");
             int delay=5;

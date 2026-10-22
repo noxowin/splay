@@ -235,10 +235,16 @@ def main():
         wait_for('plugin leaves controlled room', lambda: state().get('room') == second)
         plugin.splay('room', room=controlled)
         wait_for('plugin returns as ordinary controlled-room member', lambda: state().get('room') == controlled and state().get('is_controller') is False and playlist().get('files') == controlled_files)
+        errors_before = len(plugin.read().get('errors', []))
         plugin.splay('playlist-set', files=['forbidden-plugin-entry.mkv'])
-        wait_for('ordinary plugin playlist edit reports permission error', lambda: 'operators' in state().get('error', '') and state().get('connection') == 'connected')
+        wait_for('ordinary plugin playlist edit reports permission error',
+                 lambda: state().get('connection') == 'connected' and any(
+                     'operators' in error for error in plugin.read().get('errors', [])[errors_before:]))
+        errors_before = len(plugin.read().get('errors', []))
         plugin.splay('playlist-index', index=0)
-        wait_for('ordinary plugin index edit reports permission error', lambda: 'operators' in state().get('error', '') and state().get('connection') == 'connected')
+        wait_for('ordinary plugin index edit reports permission error',
+                 lambda: state().get('connection') == 'connected' and any(
+                     'operators' in error for error in plugin.read().get('errors', [])[errors_before:]))
         assert room_snapshot(controlled)['files'] == controlled_files
         assert playlist()['index'] == 1
         # Readiness belongs to the user even when playback control is restricted.

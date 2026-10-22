@@ -1,6 +1,6 @@
 # 参与 splay 开发
 
-欢迎提交可复现的问题和有明确范围的改进。先阅读 [安装说明](docs/install.md)、[已知限制](docs/validation-v6.md) 和 [架构](docs/architecture.md)。大改动建议先在 Issue 中说明使用场景、期望行为和验收方式。
+欢迎提交可复现的问题和有明确范围的改进。先阅读 [安装说明](docs/install.md)、[已知限制](docs/validation-v0.1.0.md) 和 [架构](docs/architecture.md)。大改动建议先在 Issue 中说明使用场景、期望行为和验收方式。
 
 ## 提交问题
 
@@ -19,17 +19,18 @@ python tools/check.py core --compiler 'C:\path\to\g++.exe'
 python tools/check.py reconnect --compiler 'C:\path\to\g++.exe'
 python tools/check.py latency --compiler 'C:\path\to\g++.exe'
 python tools/check.py autostart --compiler 'C:\path\to\g++.exe'
+python tools/check.py room-policy --compiler 'C:\path\to\g++.exe'
 python tools/check.py history --compiler 'C:\path\to\g++.exe'
 python tools/check.py credentials --compiler 'C:\path\to\g++.exe'
 python tools/package.py
-python tools/verify_release.py --archive dist/splay-windows-x64-preview6.zip --require-license
+python tools/verify_release.py --archive dist/splay-windows-x64-v0.1.0.zip --require-license
 ```
 
 GitHub Actions 在 push、pull request 和手动触发时执行上述构建、核心/重连/延迟/自动开播/历史/加密凭据测试与产物检查。Actions 下载项是开发构建，不自动成为 Release。工作流使用只读仓库权限，不向来自分支的测试注入发布凭据。
 
 已有发布包应保持原样。复核打包时可用 `python tools/package.py --output .local/review/splay-review.zip` 输出到独立目录，再用校验器的 `--archive` 指定该文件。
 
-修改 Lua 界面需要补充原生/uosc 的实际窗口检查；修改协议或同步逻辑需要使用未修改的官方客户端与服务端互通。执行入口和覆盖范围见 [preview.6 验证记录](docs/validation-v6.md)。这些测试依赖外部播放器与官方测试工具，未放进默认 CI，也不能用核心单测代替。
+修改 Lua 界面需要补充原生/uosc 的实际窗口检查；修改协议或同步逻辑需要使用未修改的官方客户端与服务端互通。执行入口和覆盖范围见 [v0.1.0 验证记录](docs/validation-v0.1.0.md)。这些测试依赖外部播放器与官方测试工具，未放进默认 CI，也不能用核心单测代替。
 
 ## 互通测试准备
 

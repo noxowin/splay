@@ -40,10 +40,10 @@ after(0.5,function()
                         local duration=mp.get_property_native('duration')
                         assert(type(duration)=='number' and duration>0,'isolated fixture media must be loaded')
                         mp.commandv('script-message-to','splay','splay-state',utils.format_json({schema=1,
-                            connection='connected',host='syncplay.test',port=8999,username='本机',room='UI 验收房间',ready=true,
+                            connection='connected',host='syncplay.test',port=8999,username='本机',room='UI 验收房间',ready=true,chat_supported=true,chat_max_length=150,
                             autostart={enabled=false,pending=false,reason='disabled'},
-                            members={{username='本机',room='UI 验收房间',ready=true,file={name='**Hidden filename**',duration=duration}},
-                                {username='同伴',room='UI 验收房间',ready=true,file={name='另一剪辑版.mp4',duration=duration+12.3}}}}))
+                            members={{username='本机',room='UI 验收房间',ready=true,chat_supported=true,chat_max_length=150,file={name='**Hidden filename**',duration=duration}},
+                                {username='同伴',room='UI 验收房间',ready=true,chat_supported=true,chat_max_length=150,file={name='另一剪辑版.mp4',duration=duration+12.3}}}}))
                         mp.commandv('script-message-to','splay','splay-open',opt.mode)
                         after(.25,function()
                             if opt.output~='' then mp.commandv('screenshot-to-file',opt.output..'/home-connected.png','window') end
@@ -57,7 +57,38 @@ after(0.5,function()
                                 after(.35,function()
                                     if opt.output~='' then mp.commandv('screenshot-to-file',opt.output..'/members-details.png','window') end
                                     print('UI_MEMBER_DETAILS '..opt.mode)
-                                    after(.15,function() print('UI_SMOKE_COMPLETED');mp.commandv('quit') end)
+                                    mp.commandv('script-message-to','splay','splay-action','settings')
+                                    after(.25,function()
+                                        if opt.output~='' then mp.commandv('screenshot-to-file',opt.output..'/settings.png','window') end
+                                        mp.commandv('script-message-to','uosc','close-menu','splay')
+                                        mp.commandv('script-message-to','console','disable')
+                                        after(.15,function()
+                                            for i=1,8 do
+                                                mp.commandv('script-message-to','splay','splay-event',utils.format_json({schema=1,id=9000+i,type='chat',username=i%2==0 and '同伴' or '本机',text='消息记录验收 '..i..' · 普通文本 {安全}'}))
+                                            end
+                                            mp.commandv('script-message-to','splay','splay-action','message-history')
+                                            wait_until('full-screen history input opens',function()
+                                                return mp.get_property_native('user-data/splay-console-open')==true and mp.get_property_native('user-data/mpv/console/open')==true
+                                            end,function()
+                                                after(.2,function()
+                                                    mp.commandv('keypress','a');mp.commandv('keypress','ENTER')
+                                                    mp.commandv('keypress','b');mp.commandv('keypress','ENTER')
+                                                    after(.15,function()
+                                                        assert(mp.get_property_native('user-data/splay-console-open')==true and mp.get_property_native('user-data/mpv/console/open')==true,
+                                                            'real mp.input must stay open after consecutive Enter submissions')
+                                                        if opt.output~='' then mp.commandv('screenshot-to-file',opt.output..'/history.png','window') end
+                                                        mp.commandv('keypress','ESC')
+                                                        wait_until('Esc closes history and restores input',function()
+                                                            return mp.get_property_native('user-data/splay-console-open')~=true and mp.get_property_native('user-data/mpv/console/open')~=true
+                                                        end,function()
+                                                            print('UI_HISTORY_CONSOLE '..opt.mode)
+                                                            print('UI_SMOKE_COMPLETED');mp.commandv('quit')
+                                                        end)
+                                                    end)
+                                                end)
+                                            end)
+                                        end)
+                                    end)
                                 end)
                             end)
                         end)

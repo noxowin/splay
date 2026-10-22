@@ -9,8 +9,14 @@ history_enabled=yes
 remember_password=yes
 # Retry temporary failures only after an explicit connection; never auto-connect on startup.
 auto_reconnect=yes
-# Opt-in display and sharing of server RTT; peers also need to enable reporting.
-latency_enabled=no
+# Display and share server RTT after explicitly enabling splay; peers need reporting support.
+latency_enabled=yes
+# Apply the five-second all-ready countdown preference after a successful room connection.
+autostart_enabled=yes
+# Pause the whole room on member departure/join (subject to controller permissions).
+# Saved preferences restore the last menu selection.
+pause_on_leave=yes
+pause_on_join=yes
 host=syncplay.pl
 port=8999
 username=splayuser
@@ -27,9 +33,17 @@ button_enabled=yes
 button_bottom=48
 button_right=22
 overlay_font_size=22
+# Scrolling chat only; room messages and member information keep their existing size.
+danmaku_font_scale=1.15
 overlay_chat_ttl=5
 overlay_chat_lines=4
 overlay_message_ttl=5
 room_panel=yes
+# room: colored names in the message area; danmaku: scrolling chat lanes.
+# Last menu selection is remembered with history_enabled=yes.
+chat_mode=room
+# Optional: raise video output cadence for smoother scrolling chat (extra playback load).
+# Applies only while splay is enabled in danmaku mode; does not rewrite the user's filter list.
+danmaku_smooth=no
 # Fallback when the player does not expose a usable cursor-autohide option.
 room_idle_timeout=3
