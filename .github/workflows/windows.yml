@@ -95,6 +95,10 @@ jobs:
       - name: Test encrypted server credentials
         run: python tools/check.py credentials --compiler "$env:CXX"
 
+      # Loopback sockets and the standard library only; no TLS certificate needed.
+      - name: Test network transport
+        run: python tools/check.py net --compiler "$env:CXX"
+
       - name: Package plugin
         run: python tools/package.py
 

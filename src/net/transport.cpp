@@ -38,6 +38,10 @@ struct Transport::Impl {
     std::atomic<bool> stop{false};
     uint64_t generation = 0;
     SOCKET sock = INVALID_SOCKET;
+    // Loopback datagram socket connected to itself. send_line() writes one
+    // byte so the worker's select() returns at once instead of at its next
+    // 50 ms timeout. Without it the worker still polls, only later.
+    SOCKET wake = INVALID_SOCKET;
     CredHandle cred{}; CtxtHandle ctx{};
     bool haveCred = false, haveCtx = false, encrypted = false;
     SecPkgContext_StreamSizes sizes{};
@@ -46,7 +50,19 @@ struct Transport::Impl {
         std::lock_guard<std::mutex> lock(mutex);
         if (k != TransportEvent::Kind::Error && k != TransportEvent::Kind::Closed &&
             (eventBytes + text.size() > MaxQueue || events.size() >= 4096)) throw std::runtime_error("Incoming event queue exceeded limit");
-        eventBytes += text.size(); events.push_back({k, std::move(text), encrypted,generation,retryable});
+        eventBytes += text.size();
+        events.push_back({k, std::move(text), encrypted,generation,retryable,std::chrono::duration<double>(Clock::now().time_since_epoch()).count()});
+    }
+    void open_wake() {
+        SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (s == INVALID_SOCKET) return;
+        sockaddr_in self{}; self.sin_family = AF_INET; self.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        int length = sizeof(self); u_long nonblock = 1;
+        if (bind(s, reinterpret_cast<sockaddr*>(&self), sizeof(self)) ||
+            getsockname(s, reinterpret_cast<sockaddr*>(&self), &length) ||
+            ::connect(s, reinterpret_cast<sockaddr*>(&self), sizeof(self)) ||
+            ioctlsocket(s, FIONBIO, &nonblock)) { closesocket(s); return; }
+        wake = s;
     }
     void check(Clock::time_point deadline) {
         if (stop) throw std::runtime_error("Cancelled");
@@ -107,32 +123,44 @@ struct Transport::Impl {
         if(rc==WSATRY_AGAIN||rc==WSAETIMEDOUT)throw std::runtime_error("Temporary DNS lookup failure");
         if(rc)throw std::runtime_error("DNS lookup failed");
         auto until = Clock::now() + std::chrono::seconds(10);
-        for (auto a = addresses; a; a = a->ai_next) {
+        size_t candidates = 0;
+        for (auto a = addresses; a; a = a->ai_next) ++candidates;
+        bool timedOut = false;
+        for (auto a = addresses; a; a = a->ai_next, --candidates) {
             check(until); sock = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
             if (sock == INVALID_SOCKET) continue;
             u_long nonblock = 1; ioctlsocket(sock, FIONBIO, &nonblock);
             int r = ::connect(sock, a->ai_addr, int(a->ai_addrlen));
             if (!r) return;
             if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                // A candidate that silently drops packets, typically an IPv6
+                // route in front of a reachable IPv4 address, must not use up
+                // the whole budget. Each one gets an equal share of the time
+                // left, at least two seconds, within the overall deadline.
+                const auto now = Clock::now();
+                const auto attempt = std::min(until, now + std::max<Clock::duration>((until - now) / candidates, std::chrono::seconds(2)));
                 // Winsock reports refused asynchronous connections through
                 // exceptfds, rather than writefds. Consume SO_ERROR and try
-                // the next resolved address under the same deadline.
-                for (;;) {
-                    check(until);
+                // the next resolved address.
+                bool settled = false;
+                while (!settled) {
+                    if (stop) throw std::runtime_error("Cancelled");
+                    if (Clock::now() >= attempt) break;
                     fd_set writable, failed;
                     FD_ZERO(&writable); FD_SET(sock, &writable);
                     FD_ZERO(&failed); FD_SET(sock, &failed);
                     timeval tv{0, 50000};
                     int waiting = select(0, nullptr, &writable, &failed, &tv);
                     if (waiting == SOCKET_ERROR) throw std::runtime_error("Socket connect wait failed");
-                    if (waiting > 0) break;
+                    settled = waiting > 0;
                 }
                 int err = 0, len = sizeof(err);
-                if (!getsockopt(sock, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &len) && !err) return;
+                if (settled && !getsockopt(sock, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &len) && !err) return;
+                if (!settled) timedOut = true;
             }
             closesocket(sock); sock = INVALID_SOCKET;
         }
-        throw std::runtime_error("TCP connection failed");
+        throw std::runtime_error(timedOut ? "Network operation timed out" : "TCP connection failed");
     }
     void tls(const std::string& hostname) {
         SCHANNEL_CRED settings{}; settings.dwVersion = SCHANNEL_CRED_VERSION;
@@ -227,9 +255,12 @@ struct Transport::Impl {
                 if(plaintext.empty() && ciphertext.empty()) partialUntil=Clock::time_point::max();
                 else if(partialUntil==Clock::time_point::max()) partialUntil=Clock::now()+std::chrono::seconds(15);
                 check(partialUntil);
-                fd_set f; FD_ZERO(&f); FD_SET(sock,&f); timeval tv{0,50000}; int r=select(0,&f,nullptr,nullptr,&tv);
+                fd_set f; FD_ZERO(&f); FD_SET(sock,&f); if(wake!=INVALID_SOCKET) FD_SET(wake,&f);
+                timeval tv{0,50000}; int r=select(0,&f,nullptr,nullptr,&tv);
                 if(r==SOCKET_ERROR) throw std::runtime_error("Socket read wait failed");
-                if(r>0 || !ciphertext.empty()) read(std::min(partialUntil,Clock::now()+std::chrono::seconds(15)));
+                // select() leaves only ready sockets in the set, none on timeout.
+                if(wake!=INVALID_SOCKET && FD_ISSET(wake,&f)) { char drained[64]; while(recv(wake,drained,sizeof(drained),0)>0) {} }
+                if(FD_ISSET(sock,&f) || !ciphertext.empty()) read(std::min(partialUntil,Clock::now()+std::chrono::seconds(15)));
             }
         } catch(const std::exception& e) {
             if(!stop) { try {
@@ -251,8 +282,8 @@ struct Transport::Impl {
         if(!stop) { try { emit(TransportEvent::Kind::Closed); } catch(...) {} }
     }
 };
-Transport::Transport():impl_(new Impl) { WSADATA w{}; if(WSAStartup(MAKEWORD(2,2),&w)) throw std::runtime_error("Winsock initialization failed"); }
-Transport::~Transport() { disconnect(); WSACleanup(); }
+Transport::Transport():impl_(new Impl) { WSADATA w{}; if(WSAStartup(MAKEWORD(2,2),&w)) throw std::runtime_error("Winsock initialization failed"); impl_->open_wake(); }
+Transport::~Transport() { disconnect(); if(impl_->wake!=INVALID_SOCKET) closesocket(impl_->wake); WSACleanup(); }
 void Transport::disconnect() { impl_->stop=true; if(impl_->worker.joinable()) impl_->worker.join(); std::lock_guard<std::mutex> lock(impl_->mutex); ++impl_->generation; impl_->outgoing.clear(); impl_->events.clear(); impl_->queued=impl_->eventBytes=0; }
 void Transport::connect(const ConnectOptions& o) { disconnect(); impl_->plaintext.clear(); impl_->ciphertext.clear(); impl_->encrypted=false; impl_->stop=false; impl_->worker=std::thread([this,o]{impl_->run(o);}); }
 void Transport::send_line(const std::string& s) {
@@ -264,6 +295,8 @@ void Transport::send_line(const std::string& s) {
     if(impl_->stop || !impl_->worker.joinable()) return;
     if(impl_->queued+line.size()+2>MaxQueue) throw std::runtime_error("Outgoing queue exceeded limit");
     impl_->queued+=line.size()+2; impl_->outgoing.push_back(line+"\r\n");
+    // A full wake buffer means a wake is already pending.
+    if(impl_->wake!=INVALID_SOCKET) { const char byte=1; ::send(impl_->wake,&byte,1,0); }
 }
 std::vector<TransportEvent> Transport::poll() { std::lock_guard<std::mutex> lock(impl_->mutex); std::vector<TransportEvent> out; out.swap(impl_->events); impl_->eventBytes=0; return out; }
 uint64_t Transport::generation() const { return impl_->generation; }

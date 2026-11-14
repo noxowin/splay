@@ -195,9 +195,11 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
         };
         publish();
         while(running){
-            double now=clock_now();
             auto* event=mpv_wait_event(h,.03);
+            // Read the clock after the wait: everything below happens now.
+            const double now=clock_now();
             if(event->event_id==MPV_EVENT_SHUTDOWN)break;
+            try{
             if(event->event_id==MPV_EVENT_START_FILE || event->event_id==MPV_EVENT_END_FILE){
                 loading=true;
                 loaded_path.clear();public_name.clear();pending_name.clear();pending_name_since=now;
@@ -431,7 +433,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                     break;
                     case splay::TransportEvent::Kind::Line:sample_changes(now);
                     {const bool logged=session.logged();
-                    session.receive(e.text,now);
+                    session.receive(e.text,now,e.time);
                     if(!logged&&session.logged()){reconnect.connected();publish();}}
                     break;
                     case splay::TransportEvent::Kind::Closed:session.disconnected("Connection closed",true);terminal=true;
@@ -459,6 +461,17 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
             }
             const auto remaining=reconnect.status(now)["remaining"].get<int>();
             if(remaining!=last_remaining){last_remaining=remaining;publish();}
+            }
+            catch(const std::exception& exception){
+                // A failure outside command handling must not end this thread:
+                // the interface would stay loaded with no core behind it. Drop
+                // the connection, show the reason and keep serving commands.
+                reconnect.cancel();cancel_secret();password_token.clear();
+                transport.disconnect();
+                have_previous=false;pending_seek=false;
+                expected_seek.reset();expected_pause.reset();
+                session.disconnected(std::string("Internal error: ")+exception.what());
+            }
         }
         reconnect.cancel();cancel_secret();password_token.clear();session.forget_password();
         transport.disconnect();

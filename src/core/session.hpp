@@ -31,7 +31,10 @@ namespace splay {
         void connected(bool encrypted,double now);
         void disconnected(const std::string& error="",bool retryable=false);
         bool retryable() const { return retryable_; }
-        void receive(const std::string& line,double now);
+        // `arrived` is when the line reached the transport, if the caller
+        // knows it: latency and the room clock are measured from then, not
+        // from the later moment the line is processed.
+        void receive(const std::string& line,double now,double arrived=NAN);
         void command(const Json& command,double now=0);
         void playback(const Playback& value);
         void local_change(bool seek,double now);

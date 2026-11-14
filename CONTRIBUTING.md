@@ -22,6 +22,7 @@ python tools/check.py autostart --compiler 'C:\path\to\g++.exe'
 python tools/check.py room-policy --compiler 'C:\path\to\g++.exe'
 python tools/check.py history --compiler 'C:\path\to\g++.exe'
 python tools/check.py credentials --compiler 'C:\path\to\g++.exe'
+python tools/check.py net --compiler 'C:\path\to\g++.exe'
 python tools/package.py
 python tools/verify_release.py --archive dist/splay-windows-x64-v0.1.0.zip --require-license
 ```
@@ -32,7 +33,7 @@ python tools/verify_release.py --archive dist/splay-windows-x64-v0.1.0.zip --req
 python3 tools/check.py core --sanitize
 ```
 
-GitHub Actions 在 push、pull request 和手动触发时执行上述构建、核心/重连/延迟/自动开播/历史/加密凭据测试与产物检查，并另在 Linux 上以 sanitizer 运行五组核心测试。Actions 下载项是开发构建，不自动成为 Release。工作流使用只读仓库权限，不向来自分支的测试注入发布凭据。
+GitHub Actions 在 push、pull request 和手动触发时执行上述构建、核心/重连/延迟/自动开播/历史/加密凭据/网络传输测试与产物检查，并另在 Linux 上以 sanitizer 运行五组核心测试。Actions 下载项是开发构建，不自动成为 Release。工作流使用只读仓库权限，不向来自分支的测试注入发布凭据。
 
 已有发布包应保持原样。复核打包时可用 `python tools/package.py --output .local/review/splay-review.zip` 输出到独立目录，再用校验器的 `--archive` 指定该文件。
 

@@ -12,6 +12,9 @@ struct TransportEvent {
     Kind kind; std::string text; bool encrypted = false;
     uint64_t generation = 0;
     bool retryable = false;
+    // std::chrono::steady_clock seconds, taken on the transport thread when
+    // the event was produced: for a Line, when its bytes arrived.
+    double time = 0;
 };
 class Transport {
 public:

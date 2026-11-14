@@ -106,6 +106,14 @@ int main(){
     g.s.disconnected();assert(g.own()["enabled"]==true&&g.own()["rtt_ms"].is_null());
     g.s.reconnect();assert(g.own()["rtt_ms"].is_null());
 
+    // The transport stamps arrival. Time spent waiting to be processed is not
+    // network latency, and a stamp later than processing time is not trusted.
+    Fixture arrival;arrival.enable();arrival.heartbeat(200);
+    arrival.s.receive(Json{{"State",{{"ping",{{"clientLatencyCalculation",200}}}}}}.dump(),200.25,200.2);
+    assert(arrival.own()["rtt_ms"]==200);
+    Fixture ahead;ahead.enable();ahead.heartbeat(300);
+    ahead.s.receive(Json{{"State",{{"ping",{{"clientLatencyCalculation",300}}}}}}.dump(),300.1,300.9);
+    assert(ahead.own()["rtt_ms"]==100);
     Fixture empty(false);empty.enable();empty.sample(101,101.1);empty.sent.clear();empty.s.tick(102);
     assert(empty.own()["rtt_ms"].is_number()&&empty.sent.empty());
     empty.s.media_changed();assert(empty.sent[0]["Set"]["file"].empty());

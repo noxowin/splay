@@ -11,9 +11,18 @@ int main(int argc,char** argv) {
     bool handshakeOnly=argc>4 && std::string(argv[4])=="handshake-only";
     bool protocolProbe=argc>4 && std::string(argv[4])=="protocol-probe";
     bool bulk=argc>4 && std::string(argv[4])=="bulk";
+    // Return every received line at once and poll without sleeping, so the
+    // peer measures the transport's own send delay rather than this loop's.
+    bool echo=argc>4 && std::string(argv[4])=="echo";
+    auto seconds=[]{return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();};
+    const double started=seconds(); double previous=started;
     t.connect(o); auto until=std::chrono::steady_clock::now()+std::chrono::seconds(handshakeOnly || protocolProbe?25:3);
     while(std::chrono::steady_clock::now()<until) {
         for(auto& e:t.poll()) {
+            // Events carry the transport thread's own clock reading, in order.
+            if(e.time<previous || e.time>seconds()) { std::cout<<"bad_event_time"<<std::endl; return 3; }
+            previous=e.time;
+            if(echo && e.kind==splay::TransportEvent::Kind::Line) { t.send_line(e.text); continue; }
             std::cout<<int(e.kind)<<":"<<e.encrypted<<":"<<e.text<<std::endl;
             if(e.kind==splay::TransportEvent::Kind::Connected) {
                 if(handshakeOnly) { t.disconnect(); return 0; }
@@ -22,7 +31,7 @@ int main(int argc,char** argv) {
             }
             if(e.kind==splay::TransportEvent::Kind::Closed) return 0;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if(!echo) std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     auto start=std::chrono::steady_clock::now(); t.disconnect();
     std::cout<<"disconnect_ms:"<<std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count()<<std::endl;

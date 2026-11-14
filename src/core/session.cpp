@@ -717,7 +717,7 @@ namespace splay {
         if(j.contains("playlistChange"))playlist(j["playlistChange"],false);
         if(j.contains("playlistIndex"))playlist(j["playlistIndex"],true);
     }
-    void Session::receive(const std::string& line,double now){
+    void Session::receive(const std::string& line,double now,double arrived){
         if(line.size()>131072){
             disconnected("Oversized protocol message");
             return;
@@ -727,6 +727,7 @@ namespace splay {
             if(!j.is_object())throw std::runtime_error("object");
             lastReceive_=now;
             now_=std::max(now_,now);
+            const double at=std::isfinite(arrived)?std::min(arrived,now):now;
             if(j.contains("Error")){
                 disconnected("Server rejected the request");
                 return;
@@ -767,7 +768,7 @@ namespace splay {
                 publish_event({{"type","connection"},{"connection",connection_}});
                 if(playlistSupported_&&!pendingPlaylist.empty())set(pendingPlaylist);
                 file();
-                if(pending.is_object())state(pending,now);
+                if(pending.is_object())state(pending,at);
                 emit({
                     {
                         "Set",{
@@ -813,7 +814,7 @@ namespace splay {
                     }
                 }
             }
-            if(logged_&&j.contains("State")&&j["State"].is_object())state(j["State"],now);
+            if(logged_&&j.contains("State")&&j["State"].is_object())state(j["State"],at);
             update_autostart();
             notify();
         }
