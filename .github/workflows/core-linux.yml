@@ -1,0 +1,48 @@
+name: Portable core checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core suites with sanitizers (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Record the toolchain
+        run: |
+          python3 --version
+          g++ --version
+
+      # Only the protocol/synchronization core is portable. The plugin, transport,
+      # history and credential code use Windows APIs and stay in the Windows workflow.
+      # MinGW GCC has no sanitizer runtime, so memory and undefined-behavior checks run here.
+      - name: Test synchronization core
+        run: python3 tools/check.py core --sanitize
+
+      - name: Test reconnect policy and session recovery
+        run: python3 tools/check.py reconnect --sanitize
+
+      - name: Test opt-in latency reporting
+        run: python3 tools/check.py latency --sanitize
+
+      - name: Test opt-in all-ready countdown
+        run: python3 tools/check.py autostart --sanitize
+
+      - name: Test room membership playback policy
+        run: python3 tools/check.py room-policy --sanitize
