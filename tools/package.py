@@ -5,8 +5,10 @@ import hashlib
 import argparse
 
 ROOT = Path(__file__).resolve().parents[1]
+# The VERSION file names the release this tree packages, without the "v".
+VERSION = (ROOT/'VERSION').read_text(encoding='ascii').strip()
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--output', type=Path, default=ROOT/'dist'/'splay-windows-x64-v0.1.0.zip',
+parser.add_argument('--output', type=Path, default=ROOT/'dist'/f'splay-windows-x64-v{VERSION}.zip',
                     help='Archive path; use a separate directory to preserve earlier downloads')
 args = parser.parse_args()
 files = {
@@ -18,7 +20,7 @@ files = {
     'INSTALL.txt': ROOT/'packaging/INSTALL.txt',
     'docs/install.md': ROOT/'docs/install.md',
     'docs/install.zh-CN.md': ROOT/'docs/install.zh-CN.md',
-    'docs/validation-v0.1.0.md': ROOT/'docs/validation-v0.1.0.md',
+    f'docs/validation-v{VERSION}.md': ROOT/f'docs/validation-v{VERSION}.md',
     'docs/upstream-compatibility.md': ROOT/'docs/upstream-compatibility.md',
     'licenses/SOURCES.json': ROOT/'third_party/SOURCES.json',
 }
