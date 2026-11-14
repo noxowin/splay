@@ -98,7 +98,8 @@ int main(){
     g.sample(104,104.4);assert(std::abs(g.own()["rtt_ms"].get<double>()-230)<.001);
     // Official 1.7.6 adds its processing/dwell duration to the echoed timestamp.
     g.heartbeat(105);g.receive({{"State",{{"ping",{{"clientLatencyCalculation",105.9}}}}}},106.1);
-    assert(std::abs(g.own()["rtt_ms"].get<double>()-225.5)<.001);
+    // Smoothed to 225.5 ms; status reports whole milliseconds.
+    {const double shown=g.own()["rtt_ms"];assert(shown==std::round(shown)&&std::abs(shown-225.5)<=.5);}
     g.heartbeat(135);g.s.tick(136.2);assert(g.own()["stale"]==true&&g.own()["rtt_ms"].is_null());
     g.s.command({{"action","room"},{"room","newroom"}});
     assert(g.own()["reported"]==false&&g.own()["rtt_ms"].is_null());

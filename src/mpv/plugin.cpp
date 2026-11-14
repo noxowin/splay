@@ -81,13 +81,21 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
         bool running=true,have_previous=false;
         int last_remaining=-1;
         splay::Playback previous;
-        auto publish=[&](){
+        // The core reports a change for every server heartbeat. Forward a
+        // state only when its content differs from the last delivered one, so
+        // steady playback does not make the interface re-parse and redraw.
+        std::string published_state;
+        auto publish_state=[&](bool force){
             auto state=session.status();
             state["reconnect"]=reconnect.status(clock_now());
             auto payload=state.dump(-1,' ',false,splay::Json::error_handler_t::replace);
+            if(!force&&payload==published_state)return;
             const char* args[]={"script-message-to","splay","splay-state",payload.c_str(),nullptr};
-            mpv_command(h,args);
+            // Remember only a delivered state: the interface may not be loaded yet.
+            if(mpv_command(h,args)>=0)published_state=std::move(payload);
+            else published_state.clear();
         };
+        auto publish=[&](){publish_state(false);};
         auto publish_credential=[&](const splay::Json& result){
             auto payload=result.dump(-1,' ',false,splay::Json::error_handler_t::replace);
             const char* args[]={"script-message-to","splay","splay-credential",payload.c_str(),nullptr};
@@ -241,7 +249,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                             if(c.contains("request_id")&&c["request_id"].is_number_integer())result["request_id"]=c["request_id"];
                             publish_credential(result);
                         }
-                        else if(action=="status")publish();
+                        else if(action=="status")publish_state(true);
                         else if(action=="secret-cancel"){
                             if(!c.contains("request_id")||(pending_secret&&c["request_id"]==pending_secret->id))cancel_secret();
                             password_token.clear();
@@ -362,6 +370,9 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                         auto data=payload.dump(-1,' ',false,splay::Json::error_handler_t::replace);
                         const char* a[]={"script-message-to","splay","splay-state",data.c_str(),nullptr};
                         mpv_command(h,a);
+                        // The interface now shows this error; let the next
+                        // regular state replace it even if nothing else changed.
+                        published_state.clear();
                     }
                 }
             }

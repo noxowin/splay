@@ -467,7 +467,9 @@ namespace splay {
         if(user==user_){
             result["reported"]=rttSample_;
             result["stale"]=rttSample_&&now_-rttReceived_>=30;
-            if(rttSample_&&!result["stale"].get<bool>())result["rtt_ms"]=rtt_*1000;
+            // Whole milliseconds, as displayed: sub-millisecond smoothing noise
+            // would otherwise make every heartbeat a visible state change.
+            if(rttSample_&&!result["stale"].get<bool>())result["rtt_ms"]=std::round(rtt_*1000);
         }
         else{
             auto member=members_.find(user);
@@ -476,7 +478,7 @@ namespace splay {
             const auto& value=report->second;
             result["reported"]=value.reported;
             result["stale"]=value.reported&&now_-value.received>=30;
-            if(value.reported&&!result["stale"].get<bool>())result["rtt_ms"]=value.rtt_ms;
+            if(value.reported&&!result["stale"].get<bool>())result["rtt_ms"]=std::round(value.rtt_ms);
         }
         return result;
     }
