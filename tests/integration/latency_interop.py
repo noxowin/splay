@@ -164,7 +164,9 @@ def main():
                  lambda: 'splayLatency' not in server_members()['plugin']['file'])
         wait_for('other opted-in native sees immediate withdrawal as unreported',
                  lambda: member('plugin', peer).get('latency', {}).get('reported') is False)
-        assert state()['latency'].get('rtt_ms') is None
+        # The observer rewrites its snapshot every 100 ms, and the peer can now
+        # show the withdrawal before this player's next snapshot is on disk.
+        wait_for('disabling sharing clears own displayed RTT', lambda: state()['latency'].get('rtt_ms') is None)
         peer.command('stop')
         wait_for('empty media sends no fake file metadata', lambda: server_members()['peer'].get('file') == {})
         wait_for('own RTT remains measurable while no media is loaded',
