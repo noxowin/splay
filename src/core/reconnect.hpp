@@ -31,9 +31,10 @@ public:
     void room_changed() { ++generation_; pending_=false; attempt_=0; delay_=0; reason_.clear(); }
     uint64_t generation() const { return generation_; }
     bool pending() const { return pending_; }
+    int remaining(double now) const { return pending_?std::max(0,int(std::ceil(deadline_-now))):0; }
     nlohmann::json status(double now) const {
         return {{"enabled",enabled_},{"pending",pending_},{"attempt",attempt_},
-                {"delay",delay_},{"remaining",pending_?std::max(0,int(std::ceil(deadline_-now))):0},{"reason",reason_}};
+                {"delay",delay_},{"remaining",remaining(now)},{"reason",reason_}};
     }
 private:
     bool active_=false,enabled_=false,pending_=false;

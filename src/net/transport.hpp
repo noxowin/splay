@@ -1,6 +1,7 @@
 #pragma once
 #include <memory>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,10 @@ public:
     void send_line(const std::string&);
     void disconnect();
     std::vector<TransportEvent> poll();
+    // Called on the transport thread after an event is queued, so the owner
+    // can wake its own loop instead of polling. Set it before connect(); it
+    // must be safe to call from another thread and must not call back here.
+    void on_event(std::function<void()> callback);
     uint64_t generation() const;
 private:
     struct Impl;

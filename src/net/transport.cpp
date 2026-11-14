@@ -35,6 +35,7 @@ struct Transport::Impl {
     std::vector<TransportEvent> events;
     size_t queued = 0, eventBytes = 0;
     std::thread worker;
+    std::function<void()> notify;
     std::atomic<bool> stop{false};
     uint64_t generation = 0;
     SOCKET sock = INVALID_SOCKET;
@@ -47,11 +48,14 @@ struct Transport::Impl {
     SecPkgContext_StreamSizes sizes{};
     std::string ciphertext, plaintext;
     void emit(TransportEvent::Kind k, std::string text = {},bool retryable=false) {
-        std::lock_guard<std::mutex> lock(mutex);
-        if (k != TransportEvent::Kind::Error && k != TransportEvent::Kind::Closed &&
-            (eventBytes + text.size() > MaxQueue || events.size() >= 4096)) throw std::runtime_error("Incoming event queue exceeded limit");
-        eventBytes += text.size();
-        events.push_back({k, std::move(text), encrypted,generation,retryable,std::chrono::duration<double>(Clock::now().time_since_epoch()).count()});
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (k != TransportEvent::Kind::Error && k != TransportEvent::Kind::Closed &&
+                (eventBytes + text.size() > MaxQueue || events.size() >= 4096)) throw std::runtime_error("Incoming event queue exceeded limit");
+            eventBytes += text.size();
+            events.push_back({k, std::move(text), encrypted,generation,retryable,std::chrono::duration<double>(Clock::now().time_since_epoch()).count()});
+        }
+        if (notify) notify();
     }
     void open_wake() {
         SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -298,6 +302,7 @@ void Transport::send_line(const std::string& s) {
     // A full wake buffer means a wake is already pending.
     if(impl_->wake!=INVALID_SOCKET) { const char byte=1; ::send(impl_->wake,&byte,1,0); }
 }
+void Transport::on_event(std::function<void()> callback) { disconnect(); impl_->notify=std::move(callback); }
 std::vector<TransportEvent> Transport::poll() { std::lock_guard<std::mutex> lock(impl_->mutex); std::vector<TransportEvent> out; out.swap(impl_->events); impl_->eventBytes=0; return out; }
 uint64_t Transport::generation() const { return impl_->generation; }
 }

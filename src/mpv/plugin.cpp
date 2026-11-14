@@ -55,6 +55,9 @@ namespace {
 extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
     try{
         splay::Transport transport;
+        // mpv_wakeup is thread-safe and is the only mpv call made from the
+        // transport thread: it ends the wait below when a line arrives.
+        transport.on_event([h]{mpv_wakeup(h);});
         splay::Session session;
         splay::History history;
         splay::Credentials credentials;
@@ -195,7 +198,12 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
         };
         publish();
         while(running){
-            auto* event=mpv_wait_event(h,.03);
+            // With no connection, retry, password prompt or local offset, only
+            // an mpv event can change anything: wait for one instead of waking
+            // 33 times a second in every player that merely has splay installed.
+            // The one-second bound only expires a held password token.
+            auto quiet=[&]{return session.idle()&&!reconnect.pending()&&!pending_secret;};
+            auto* event=mpv_wait_event(h,quiet()?1.0:.03);
             // Read the clock after the wait: everything below happens now.
             const double now=clock_now();
             if(event->event_id==MPV_EVENT_SHUTDOWN)break;
@@ -276,7 +284,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                             password_token.clear();
                             const auto id=c["request_id"].get<uint64_t>();
                             secret_input.request(id,text(c,"title",256,true),text(c,"prompt",1024,true));
-                            pending_secret=PendingSecret{id,reconnect.generation(),c,session.status()["room"].get<std::string>()};
+                            pending_secret=PendingSecret{id,reconnect.generation(),c,session.room()};
                             }catch(const std::exception& exception){
                                 cancel_secret();
                                 publish_secret({{"request_id",c.value("request_id",splay::Json())},
@@ -378,7 +386,14 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                     }
                 }
             }
-            if(now>=next_sample){
+            // Evaluated again: the event above may have been a connect or
+            // offset command. While quiet nothing consumes the samples; drop
+            // the comparison baseline so a later connection starts afresh.
+            if(quiet()){
+                have_previous=false;pending_seek=false;
+                expected_seek.reset();expected_pause.reset();
+            }
+            else if(now>=next_sample){
                 sample_changes(now);
                 next_sample=now+.1;
             }
@@ -389,7 +404,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                     const auto purpose=request.command["purpose"].get<std::string>();
                     splay::Json response={{"request_id",result->id},{"purpose",purpose},{"cancelled",result->cancelled}};
                     if(request.generation!=reconnect.generation()||
-                        (purpose!="server"&&(!session.logged()||request.room!=session.status()["room"].get<std::string>())))response["cancelled"]=true;
+                        (purpose!="server"&&(!session.logged()||request.room!=session.room())))response["cancelled"]=true;
                     else if(!result->error.empty())response["error"]=result->error;
                     else if(!result->cancelled){
                         try{
@@ -441,25 +456,25 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                     case splay::TransportEvent::Kind::Error:session.disconnected(e.text,e.retryable);terminal=true;
                     break;
                 }
-                if(terminal||session.status()["connection"]=="error"){
-                    reconnect.failed(session.retryable(),session.status()["error"].get<std::string>(),now);
+                if(terminal||session.connection()=="error"){
+                    reconnect.failed(session.retryable(),session.error(),now);
                     cancel_secret();
                     transport.disconnect();
                     publish();
                     break;
                 }
             }
-            const auto before_tick=session.status()["connection"];
+            const bool failed_before_tick=session.connection()=="error";
             session.tick(now);
-            if(before_tick!="error"&&session.status()["connection"]=="error"){
-                reconnect.failed(session.retryable(),session.status()["error"].get<std::string>(),now);
+            if(!failed_before_tick&&session.connection()=="error"){
+                reconnect.failed(session.retryable(),session.error(),now);
                 cancel_secret(); transport.disconnect(); publish();
             }
             if(reconnect.due(now)){
                 pending_seek=false;expected_seek.reset();expected_pause.reset();have_previous=false;
                 sample();session.reconnect();transport.connect(connection_options);suppress_until=now+1;publish();
             }
-            const auto remaining=reconnect.status(now)["remaining"].get<int>();
+            const auto remaining=reconnect.remaining(now);
             if(remaining!=last_remaining){last_remaining=remaining;publish();}
             }
             catch(const std::exception& exception){

@@ -1,10 +1,13 @@
 #include "../../src/net/transport.hpp"
+#include <atomic>
 #include <chrono>
 #include <iostream>
 #include <thread>
 int main(int argc,char** argv) {
     if(argc<3) return 2;
     splay::Transport t;
+    std::atomic<int> wakes{0};
+    t.on_event([&]{++wakes;});
     splay::ConnectOptions o; o.host="127.0.0.1"; o.port=std::stoi(argv[1]);
     std::string mode=argv[2]; o.tls=mode=="off"?splay::TlsMode::Off:mode=="require"?splay::TlsMode::Require:splay::TlsMode::Prefer;
     if(argc>3) o.host=argv[3];
@@ -19,6 +22,8 @@ int main(int argc,char** argv) {
     t.connect(o); auto until=std::chrono::steady_clock::now()+std::chrono::seconds(handshakeOnly || protocolProbe?25:3);
     while(std::chrono::steady_clock::now()<until) {
         for(auto& e:t.poll()) {
+            // The owner is told about an event no later than it can poll it.
+            if(wakes.load()==0) { std::cout<<"missing_wake"<<std::endl; return 4; }
             // Events carry the transport thread's own clock reading, in order.
             if(e.time<previous || e.time>seconds()) { std::cout<<"bad_event_time"<<std::endl; return 3; }
             previous=e.time;

@@ -44,6 +44,13 @@ namespace splay {
         bool logged() const {
             return logged_;
         }
+        const std::string& connection() const { return connection_; }
+        const std::string& error() const { return error_; }
+        const std::string& room() const { return room_; }
+        // Nothing depends on the clock or on the player's position: neither
+        // connected nor connecting, and no local time offset whose media
+        // boundary has to be held. Only a command can change that.
+        bool idle() const { return !logged_&&connection_!="connecting"&&timeOffset_==0; }
         private:
         std::string host_,user_,room_,password_,connection_="disconnected",error_;
         int port_=8999;
