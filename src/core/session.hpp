@@ -31,7 +31,10 @@ namespace splay {
         void connected(bool encrypted,double now);
         void disconnected(const std::string& error="",bool retryable=false);
         bool retryable() const { return retryable_; }
-        void receive(const std::string& line,double now);
+        // `arrived` is when the line reached the transport, if the caller
+        // knows it: latency and the room clock are measured from then, not
+        // from the later moment the line is processed.
+        void receive(const std::string& line,double now,double arrived=NAN);
         void command(const Json& command,double now=0);
         void playback(const Playback& value);
         void local_change(bool seek,double now);
@@ -41,6 +44,13 @@ namespace splay {
         bool logged() const {
             return logged_;
         }
+        const std::string& connection() const { return connection_; }
+        const std::string& error() const { return error_; }
+        const std::string& room() const { return room_; }
+        // Nothing depends on the clock or on the player's position: neither
+        // connected nor connecting, and no local time offset whose media
+        // boundary has to be held. Only a command can change that.
+        bool idle() const { return !logged_&&connection_!="connecting"&&timeOffset_==0; }
         private:
         std::string host_,user_,room_,password_,connection_="disconnected",error_;
         int port_=8999;

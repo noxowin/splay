@@ -1,5 +1,6 @@
 #include "session.hpp"
 #include "media_name.hpp"
+#include "md5.hpp"
 #include <cmath>
 #include <regex>
 #include <stdexcept>
@@ -145,30 +146,8 @@ namespace splay {
         }
     }
     std::string password_md5(const std::string& input){
-        if(input.empty())return {};
-#ifdef _WIN32
-        BCRYPT_ALG_HANDLE alg=nullptr;
-        BCRYPT_HASH_HANDLE hash=nullptr;
-        DWORD bytes=0,size=0;
-        if(BCryptOpenAlgorithmProvider(&alg,BCRYPT_MD5_ALGORITHM,nullptr,0)<0)throw std::runtime_error("Password hashing unavailable");
-        BCryptGetProperty(alg,BCRYPT_OBJECT_LENGTH,reinterpret_cast<PUCHAR>(&size),sizeof(size),&bytes,0);
-        std::vector<unsigned char> object(size);
-        unsigned char digest[16];
-        NTSTATUS result=BCryptCreateHash(alg,&hash,object.data(),size,nullptr,0,0);
-        if(result>=0)result=BCryptHashData(hash,reinterpret_cast<PUCHAR>(const_cast<char*>(input.data())),static_cast<ULONG>(input.size()),0);
-        if(result>=0)result=BCryptFinishHash(hash,digest,16,0);
-        if(hash)BCryptDestroyHash(hash);
-        BCryptCloseAlgorithmProvider(alg,0);
-        if(result<0)throw std::runtime_error("Password hashing failed");
-        std::string out;
-        for(auto c:digest){
-            out+="0123456789abcdef"[c>>4];
-            out+="0123456789abcdef"[c&15];
-        }
-        return out;
-#else
-        throw std::runtime_error("Password hashing requires Windows");
-#endif
+        // No server password means no password field, not the empty digest.
+        return input.empty()?std::string():md5_hex(input);
     }
     void Session::emit(const Json& j){
         if(send)send(j);
@@ -488,7 +467,9 @@ namespace splay {
         if(user==user_){
             result["reported"]=rttSample_;
             result["stale"]=rttSample_&&now_-rttReceived_>=30;
-            if(rttSample_&&!result["stale"].get<bool>())result["rtt_ms"]=rtt_*1000;
+            // Whole milliseconds, as displayed: sub-millisecond smoothing noise
+            // would otherwise make every heartbeat a visible state change.
+            if(rttSample_&&!result["stale"].get<bool>())result["rtt_ms"]=std::round(rtt_*1000);
         }
         else{
             auto member=members_.find(user);
@@ -497,7 +478,7 @@ namespace splay {
             const auto& value=report->second;
             result["reported"]=value.reported;
             result["stale"]=value.reported&&now_-value.received>=30;
-            if(value.reported&&!result["stale"].get<bool>())result["rtt_ms"]=value.rtt_ms;
+            if(value.reported&&!result["stale"].get<bool>())result["rtt_ms"]=std::round(value.rtt_ms);
         }
         return result;
     }
@@ -736,7 +717,7 @@ namespace splay {
         if(j.contains("playlistChange"))playlist(j["playlistChange"],false);
         if(j.contains("playlistIndex"))playlist(j["playlistIndex"],true);
     }
-    void Session::receive(const std::string& line,double now){
+    void Session::receive(const std::string& line,double now,double arrived){
         if(line.size()>131072){
             disconnected("Oversized protocol message");
             return;
@@ -746,6 +727,7 @@ namespace splay {
             if(!j.is_object())throw std::runtime_error("object");
             lastReceive_=now;
             now_=std::max(now_,now);
+            const double at=std::isfinite(arrived)?std::min(arrived,now):now;
             if(j.contains("Error")){
                 disconnected("Server rejected the request");
                 return;
@@ -786,7 +768,7 @@ namespace splay {
                 publish_event({{"type","connection"},{"connection",connection_}});
                 if(playlistSupported_&&!pendingPlaylist.empty())set(pendingPlaylist);
                 file();
-                if(pending.is_object())state(pending,now);
+                if(pending.is_object())state(pending,at);
                 emit({
                     {
                         "Set",{
@@ -832,7 +814,7 @@ namespace splay {
                     }
                 }
             }
-            if(logged_&&j.contains("State")&&j["State"].is_object())state(j["State"],now);
+            if(logged_&&j.contains("State")&&j["State"].is_object())state(j["State"],at);
             update_autostart();
             notify();
         }

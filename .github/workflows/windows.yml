@@ -74,26 +74,40 @@ jobs:
       - name: Build native plugin
         run: python tools/build.py build --compiler "$env:CXX"
 
+      # The suites are independent: each one runs and reports even after another
+      # fails. Packaging below still requires every earlier step to succeed.
       - name: Test synchronization core
+        if: ${{ !cancelled() }}
         run: python tools/check.py core --compiler "$env:CXX"
 
       - name: Test reconnect policy and session recovery
+        if: ${{ !cancelled() }}
         run: python tools/check.py reconnect --compiler "$env:CXX"
 
       - name: Test opt-in latency reporting
+        if: ${{ !cancelled() }}
         run: python tools/check.py latency --compiler "$env:CXX"
 
       - name: Test opt-in all-ready countdown
+        if: ${{ !cancelled() }}
         run: python tools/check.py autostart --compiler "$env:CXX"
 
       - name: Test connection history
+        if: ${{ !cancelled() }}
         run: python tools/check.py history --compiler "$env:CXX"
 
       - name: Test room membership playback policy
+        if: ${{ !cancelled() }}
         run: python tools/check.py room-policy --compiler "$env:CXX"
 
       - name: Test encrypted server credentials
+        if: ${{ !cancelled() }}
         run: python tools/check.py credentials --compiler "$env:CXX"
+
+      # Loopback sockets and the standard library only; no TLS certificate needed.
+      - name: Test network transport
+        if: ${{ !cancelled() }}
+        run: python tools/check.py net --compiler "$env:CXX"
 
       - name: Package plugin
         run: python tools/package.py

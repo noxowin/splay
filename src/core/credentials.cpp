@@ -1,4 +1,5 @@
 #include "credentials.hpp"
+#include "file_lock.hpp"
 #include <algorithm>
 #include <atomic>
 #include <filesystem>
@@ -25,21 +26,9 @@ struct Handle {
     HANDLE value=INVALID_HANDLE_VALUE;
     ~Handle(){if(value!=INVALID_HANDLE_VALUE)CloseHandle(value);}
 };
-struct Lock {
-    Handle file;
-    OVERLAPPED overlap{};
-    explicit Lock(const std::wstring& path) {
-        file.value=CreateFileW((path+L".lock").c_str(),GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,
-            nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
-        if(file.value==INVALID_HANDLE_VALUE)throw std::runtime_error("Cannot open credential lock file");
-        const auto start=GetTickCount64();
-        while(!LockFileEx(file.value,LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY,0,1,0,&overlap)) {
-            if(GetLastError()!=ERROR_LOCK_VIOLATION||GetTickCount64()-start>=1900)
-                throw std::runtime_error("Credential file is busy or cannot be locked; try again");
-            Sleep(10);
-        }
-    }
-    ~Lock(){if(file.value!=INVALID_HANDLE_VALUE)UnlockFileEx(file.value,0,1,0,&overlap);}
+struct Lock : FileLock {
+    explicit Lock(const std::wstring& path):FileLock(path,"Cannot open credential lock file",
+        "Credential file is busy or cannot be locked; try again") {}
 };
 int port_number(const Json& value) {
     if(!value.is_number_integer())throw std::runtime_error("Invalid credential port");

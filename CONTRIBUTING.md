@@ -22,11 +22,20 @@ python tools/check.py autostart --compiler 'C:\path\to\g++.exe'
 python tools/check.py room-policy --compiler 'C:\path\to\g++.exe'
 python tools/check.py history --compiler 'C:\path\to\g++.exe'
 python tools/check.py credentials --compiler 'C:\path\to\g++.exe'
+python tools/check.py net --compiler 'C:\path\to\g++.exe'
 python tools/package.py
 python tools/verify_release.py --archive dist/splay-windows-x64-v0.1.0.zip --require-license
 ```
 
-GitHub Actions 在 push、pull request 和手动触发时执行上述构建、核心/重连/延迟/自动开播/历史/加密凭据测试与产物检查。Actions 下载项是开发构建，不自动成为 Release。工作流使用只读仓库权限，不向来自分支的测试注入发布凭据。
+协议与同步核心（`core`、`reconnect`、`latency`、`autostart`、`room-policy` 五组）不依赖 Windows API，也可在 Linux 的 GCC 下运行；加 `--sanitize` 会启用 AddressSanitizer 与 UndefinedBehaviorSanitizer，MinGW 不支持该选项。其余检查和插件构建仍需 Windows。
+
+```bash
+python3 tools/check.py core --sanitize
+```
+
+GitHub Actions 在 push、pull request 和手动触发时执行上述构建、核心/重连/延迟/自动开播/历史/加密凭据/网络传输测试与产物检查，并另在 Linux 上以 sanitizer 运行五组核心测试。Actions 下载项是开发构建，不自动成为 Release。工作流使用只读仓库权限，不向来自分支的测试注入发布凭据。
+
+根目录的 `VERSION` 是打包版本号的唯一来源：压缩包名称和随包验证记录的文件名由它得出，校验器会核对 `packaging/INSTALL.txt` 与它一致。发布新版时先改 `VERSION`，再按校验器提示更新其余文件。
 
 已有发布包应保持原样。复核打包时可用 `python tools/package.py --output .local/review/splay-review.zip` 输出到独立目录，再用校验器的 `--archive` 指定该文件。
 

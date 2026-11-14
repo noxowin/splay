@@ -1,4 +1,5 @@
 #include "../../src/core/session.hpp"
+#include "../../src/core/md5.hpp"
 #include <cassert>
 #include <iostream>
 #include <limits>
@@ -134,6 +135,23 @@ int main(){
  s.connected(false,200);s.tick(213);assert(s.status()["connection"]=="error");
  s.receive("[]",214);assert(!s.logged());s.receive(std::string(131073,'x'),214);assert(!s.logged());
  assert(password_md5("password")=="5f4dcc3b5aa765d61d8327deb882cf99");
+ // RFC 1321 A.5 test suite, then the padding boundaries: 55 bytes fit one
+ // block, 56-64 need a second, and 119/120 repeat that after a full block.
+ assert(password_md5("").empty());
+ assert(md5_hex("")=="d41d8cd98f00b204e9800998ecf8427e");
+ assert(md5_hex("a")=="0cc175b9c0f1b6a831c399e269772661");
+ assert(md5_hex("abc")=="900150983cd24fb0d6963f7d28e17f72");
+ assert(md5_hex("message digest")=="f96b697d7cb7938d525a2f31aaf161d0");
+ assert(md5_hex("abcdefghijklmnopqrstuvwxyz")=="c3fcd3d76192e4007dfb496cca67e13b");
+ assert(md5_hex("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")=="d174ab98d277d9f5a5611c2c9f419d9f");
+ assert(md5_hex("12345678901234567890123456789012345678901234567890123456789012345678901234567890")=="57edf4a22be3c955ac49da2e2107b67a");
+ assert(md5_hex(std::string(55,'a'))=="ef1772b6dff9a122358552954ad0df65");
+ assert(md5_hex(std::string(56,'a'))=="3b0c8ac703f828b04c6c197006d17218");
+ assert(md5_hex(std::string(63,'a'))=="b06521f39153d618550606be297466d5");
+ assert(md5_hex(std::string(64,'a'))=="014842d480b571495a4a0363793f7367");
+ assert(md5_hex(std::string(119,'a'))=="8a7bd0732ed6a28ce75f6dabc90e1613");
+ assert(md5_hex(std::string(120,'a'))=="5f61c0ccad4cac44c75ff505e1f1e537");
+ assert(md5_hex(std::string(1024,'\xff'))=="9a8918b11878da506f761bc1c9c4ce17");
  // Chat is the upstream wire protocol: outgoing string, incoming username/message.
  Session chat;chat.command({{"action","room-policy"},{"pause_on_join",false},{"pause_on_leave",false}});std::vector<Json> messages,events;
  chat.send=[&](const Json& j){messages.push_back(j);};

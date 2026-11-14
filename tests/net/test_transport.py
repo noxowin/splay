@@ -91,4 +91,19 @@ def bulk(conn):
         time.sleep(.0001)
     assert data == (b'{"payload":"' + b'x' * 16000 + b'"}\r\n') * 50
 run('off', bulk, ('127.0.0.1', 'bulk'))
-print('PASS: partial reads, multiple lines, CRLF writes, localhost IPv4 fallback, prefer fallback, require rejection, full Unicode playlist, 128KiB line cap, bounded stalled disconnect, 800KB queued writes with slow fragmented reads')
+
+def echo(conn):
+    assert receive_line(conn) == b'{"hello":1}\r\n'
+    delays = []
+    for number in range(30):
+        line = b'{"ping":%d}\r\n' % number
+        sent = time.perf_counter()
+        conn.sendall(line)
+        assert receive_line(conn) == line
+        delays.append(time.perf_counter() - sent)
+    # A queued line must leave when it is queued, not at the worker's next
+    # 50 ms poll: that wait averaged 25 ms and was measured as network latency.
+    median = sorted(delays)[len(delays) // 2]
+    assert median < .015, delays
+run('off', echo, ('127.0.0.1', 'echo'))
+print('PASS: partial reads, multiple lines, CRLF writes, localhost IPv4 fallback, prefer fallback, require rejection, full Unicode playlist, 128KiB line cap, bounded stalled disconnect, prompt queued sends, ordered event timestamps, 800KB queued writes with slow fragmented reads')

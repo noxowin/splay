@@ -55,8 +55,19 @@ def verify_sources(root):
     return recorded
 
 
+def release_version(root):
+    version = (root / 'VERSION').read_text(encoding='ascii').strip()
+    require(re.fullmatch(r'\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?', version), 'Invalid VERSION: ' + version)
+    # The packaged install note names its release; it must be the one being packaged.
+    note = (root / 'packaging/INSTALL.txt').read_text(encoding='utf-8')
+    for expected in ('splay v' + version + ' ', 'docs/validation-v' + version + '.md', '/releases/tag/v' + version + '\n'):
+        require(expected in note, 'packaging/INSTALL.txt does not match VERSION ' + version + ': missing ' + expected.strip())
+    return version
+
+
 def package_inputs(root, recorded, require_license=False):
     # Intentionally independent of package.py: additions require an explicit review here too.
+    version = release_version(root)
     files = {
         'scripts/splay_core.dll': root / 'build/splay_core.dll',
         'scripts/splay.lua': root / 'scripts/splay.lua',
@@ -66,7 +77,7 @@ def package_inputs(root, recorded, require_license=False):
         'INSTALL.txt': root / 'packaging/INSTALL.txt',
         'docs/install.md': root / 'docs/install.md',
         'docs/install.zh-CN.md': root / 'docs/install.zh-CN.md',
-        'docs/validation-v0.1.0.md': root / 'docs/validation-v0.1.0.md',
+        'docs/validation-v' + version + '.md': root / ('docs/validation-v' + version + '.md'),
         'docs/upstream-compatibility.md': root / 'docs/upstream-compatibility.md',
         'licenses/SOURCES.json': root / 'third_party/SOURCES.json',
         'THIRD_PARTY_NOTICES.md': root / 'THIRD_PARTY_NOTICES.md',
@@ -132,6 +143,7 @@ def main():
     args = parser.parse_args()
     try:
         recorded = verify_sources(ROOT)
+        print('Release version: ' + release_version(ROOT) + ' (VERSION and packaged install note agree)')
         if not args.sources_only:
             archive_path = args.archive
             if archive_path is None:

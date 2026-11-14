@@ -741,8 +741,9 @@ publish=function()
     end
     enrich_media()
     if offset_suggestion_guard and offset_suggestion_guard.valid then check_offset_suggestion(offset_suggestion_guard) end
-    overlay('splay-state',utils.format_json(state))
-    mp.commandv('script-message-to','splay_playlist','splay-state',utils.format_json(state))
+    local encoded=utils.format_json(state)
+    overlay('splay-state',encoded)
+    mp.commandv('script-message-to','splay_playlist','splay-state',encoded)
     overlay('splay-menu-model',utils.format_json({title=title('home'),items=rows('home'),enabled=enabled}))
     mp.set_property_native('user-data/splay',{enabled=enabled,connection=state.connection,room=state.room})
     if menu_open then mp.commandv('script-message-to','uosc','update-menu',utils.format_json(menu())) end

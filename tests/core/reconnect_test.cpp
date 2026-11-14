@@ -6,6 +6,24 @@
 
 using namespace splay;
 int main(){
+    {
+        // The adapter stops polling the player while idle() holds.
+        Session quiet;assert(quiet.idle()&&quiet.connection()=="disconnected"&&quiet.error().empty());
+        quiet.send=[](const Json&){};
+        quiet.command({{"action","set-offset"},{"seconds",5}},1);assert(!quiet.idle());
+        quiet.command({{"action","set-offset"},{"seconds",0}},2);assert(quiet.idle());
+        quiet.configure("localhost",8999,"me","room","");assert(!quiet.idle()&&quiet.connection()=="connecting"&&quiet.room()=="room");
+        quiet.connected(false,3);
+        quiet.receive(R"({"Hello":{"username":"me","room":{"name":"room"},"realversion":"1.7.6"}})",3);
+        assert(quiet.logged()&&!quiet.idle()&&quiet.connection()=="connected");
+        quiet.disconnected("Connection closed",true);
+        assert(quiet.idle()&&quiet.connection()=="error"&&quiet.error()=="Connection closed");
+        quiet.disconnected();assert(quiet.idle()&&quiet.connection()=="disconnected");
+        Reconnect waiting;assert(waiting.remaining(0)==0);
+        waiting.start(true);waiting.failed(true,"lost",10);
+        assert(waiting.pending()&&waiting.remaining(10)==2&&waiting.remaining(11.5)==1&&waiting.remaining(13)==0);
+        assert(waiting.status(10)["remaining"]==2);
+    }
     Reconnect r;
     assert(!r.status(0)["enabled"].get<bool>()&&!r.failed(true,"offline",0)&&!r.due(100));
     r.start(false);assert(!r.failed(true,"offline",0));

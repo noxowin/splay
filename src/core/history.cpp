@@ -1,4 +1,5 @@
 #include "history.hpp"
+#include "file_lock.hpp"
 #include <algorithm>
 #include <atomic>
 #include <fstream>
@@ -26,21 +27,9 @@ struct Handle {
     HANDLE value=INVALID_HANDLE_VALUE;
     ~Handle(){if(value!=INVALID_HANDLE_VALUE)CloseHandle(value);}
 };
-struct Lock {
-    Handle file;
-    OVERLAPPED overlap{};
-    explicit Lock(const std::wstring& path) {
-        file.value=CreateFileW((path+L".lock").c_str(),GENERIC_READ|GENERIC_WRITE,
-            FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
-        if(file.value==INVALID_HANDLE_VALUE)throw std::runtime_error("Cannot open history lock file");
-        const auto start=GetTickCount64();
-        while(!LockFileEx(file.value,LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY,0,1,0,&overlap)) {
-            if(GetLastError()!=ERROR_LOCK_VIOLATION||GetTickCount64()-start>=1900)
-                throw std::runtime_error("History file is busy or cannot be locked; try again");
-            Sleep(10);
-        }
-    }
-    ~Lock(){if(file.value!=INVALID_HANDLE_VALUE)UnlockFileEx(file.value,0,1,0,&overlap);}
+struct Lock : FileLock {
+    explicit Lock(const std::wstring& path):FileLock(path,"Cannot open history lock file",
+        "History file is busy or cannot be locked; try again") {}
 };
 Json settings(const Json& source,bool allow_empty_room=false) {
     if(!source.is_object())throw std::runtime_error("History settings must be an object");

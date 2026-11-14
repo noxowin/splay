@@ -55,6 +55,9 @@ namespace {
 extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
     try{
         splay::Transport transport;
+        // mpv_wakeup is thread-safe and is the only mpv call made from the
+        // transport thread: it ends the wait below when a line arrives.
+        transport.on_event([h]{mpv_wakeup(h);});
         splay::Session session;
         splay::History history;
         splay::Credentials credentials;
@@ -81,13 +84,21 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
         bool running=true,have_previous=false;
         int last_remaining=-1;
         splay::Playback previous;
-        auto publish=[&](){
+        // The core reports a change for every server heartbeat. Forward a
+        // state only when its content differs from the last delivered one, so
+        // steady playback does not make the interface re-parse and redraw.
+        std::string published_state;
+        auto publish_state=[&](bool force){
             auto state=session.status();
             state["reconnect"]=reconnect.status(clock_now());
             auto payload=state.dump(-1,' ',false,splay::Json::error_handler_t::replace);
+            if(!force&&payload==published_state)return;
             const char* args[]={"script-message-to","splay","splay-state",payload.c_str(),nullptr};
-            mpv_command(h,args);
+            // Remember only a delivered state: the interface may not be loaded yet.
+            if(mpv_command(h,args)>=0)published_state=std::move(payload);
+            else published_state.clear();
         };
+        auto publish=[&](){publish_state(false);};
         auto publish_credential=[&](const splay::Json& result){
             auto payload=result.dump(-1,' ',false,splay::Json::error_handler_t::replace);
             const char* args[]={"script-message-to","splay","splay-credential",payload.c_str(),nullptr};
@@ -187,9 +198,16 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
         };
         publish();
         while(running){
-            double now=clock_now();
-            auto* event=mpv_wait_event(h,.03);
+            // With no connection, retry, password prompt or local offset, only
+            // an mpv event can change anything: wait for one instead of waking
+            // 33 times a second in every player that merely has splay installed.
+            // The one-second bound only expires a held password token.
+            auto quiet=[&]{return session.idle()&&!reconnect.pending()&&!pending_secret;};
+            auto* event=mpv_wait_event(h,quiet()?1.0:.03);
+            // Read the clock after the wait: everything below happens now.
+            const double now=clock_now();
             if(event->event_id==MPV_EVENT_SHUTDOWN)break;
+            try{
             if(event->event_id==MPV_EVENT_START_FILE || event->event_id==MPV_EVENT_END_FILE){
                 loading=true;
                 loaded_path.clear();public_name.clear();pending_name.clear();pending_name_since=now;
@@ -241,7 +259,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                             if(c.contains("request_id")&&c["request_id"].is_number_integer())result["request_id"]=c["request_id"];
                             publish_credential(result);
                         }
-                        else if(action=="status")publish();
+                        else if(action=="status")publish_state(true);
                         else if(action=="secret-cancel"){
                             if(!c.contains("request_id")||(pending_secret&&c["request_id"]==pending_secret->id))cancel_secret();
                             password_token.clear();
@@ -266,7 +284,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                             password_token.clear();
                             const auto id=c["request_id"].get<uint64_t>();
                             secret_input.request(id,text(c,"title",256,true),text(c,"prompt",1024,true));
-                            pending_secret=PendingSecret{id,reconnect.generation(),c,session.status()["room"].get<std::string>()};
+                            pending_secret=PendingSecret{id,reconnect.generation(),c,session.room()};
                             }catch(const std::exception& exception){
                                 cancel_secret();
                                 publish_secret({{"request_id",c.value("request_id",splay::Json())},
@@ -362,10 +380,20 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                         auto data=payload.dump(-1,' ',false,splay::Json::error_handler_t::replace);
                         const char* a[]={"script-message-to","splay","splay-state",data.c_str(),nullptr};
                         mpv_command(h,a);
+                        // The interface now shows this error; let the next
+                        // regular state replace it even if nothing else changed.
+                        published_state.clear();
                     }
                 }
             }
-            if(now>=next_sample){
+            // Evaluated again: the event above may have been a connect or
+            // offset command. While quiet nothing consumes the samples; drop
+            // the comparison baseline so a later connection starts afresh.
+            if(quiet()){
+                have_previous=false;pending_seek=false;
+                expected_seek.reset();expected_pause.reset();
+            }
+            else if(now>=next_sample){
                 sample_changes(now);
                 next_sample=now+.1;
             }
@@ -376,7 +404,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                     const auto purpose=request.command["purpose"].get<std::string>();
                     splay::Json response={{"request_id",result->id},{"purpose",purpose},{"cancelled",result->cancelled}};
                     if(request.generation!=reconnect.generation()||
-                        (purpose!="server"&&(!session.logged()||request.room!=session.status()["room"].get<std::string>())))response["cancelled"]=true;
+                        (purpose!="server"&&(!session.logged()||request.room!=session.room())))response["cancelled"]=true;
                     else if(!result->error.empty())response["error"]=result->error;
                     else if(!result->cancelled){
                         try{
@@ -420,7 +448,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                     break;
                     case splay::TransportEvent::Kind::Line:sample_changes(now);
                     {const bool logged=session.logged();
-                    session.receive(e.text,now);
+                    session.receive(e.text,now,e.time);
                     if(!logged&&session.logged()){reconnect.connected();publish();}}
                     break;
                     case splay::TransportEvent::Kind::Closed:session.disconnected("Connection closed",true);terminal=true;
@@ -428,26 +456,37 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                     case splay::TransportEvent::Kind::Error:session.disconnected(e.text,e.retryable);terminal=true;
                     break;
                 }
-                if(terminal||session.status()["connection"]=="error"){
-                    reconnect.failed(session.retryable(),session.status()["error"].get<std::string>(),now);
+                if(terminal||session.connection()=="error"){
+                    reconnect.failed(session.retryable(),session.error(),now);
                     cancel_secret();
                     transport.disconnect();
                     publish();
                     break;
                 }
             }
-            const auto before_tick=session.status()["connection"];
+            const bool failed_before_tick=session.connection()=="error";
             session.tick(now);
-            if(before_tick!="error"&&session.status()["connection"]=="error"){
-                reconnect.failed(session.retryable(),session.status()["error"].get<std::string>(),now);
+            if(!failed_before_tick&&session.connection()=="error"){
+                reconnect.failed(session.retryable(),session.error(),now);
                 cancel_secret(); transport.disconnect(); publish();
             }
             if(reconnect.due(now)){
                 pending_seek=false;expected_seek.reset();expected_pause.reset();have_previous=false;
                 sample();session.reconnect();transport.connect(connection_options);suppress_until=now+1;publish();
             }
-            const auto remaining=reconnect.status(now)["remaining"].get<int>();
+            const auto remaining=reconnect.remaining(now);
             if(remaining!=last_remaining){last_remaining=remaining;publish();}
+            }
+            catch(const std::exception& exception){
+                // A failure outside command handling must not end this thread:
+                // the interface would stay loaded with no core behind it. Drop
+                // the connection, show the reason and keep serving commands.
+                reconnect.cancel();cancel_secret();password_token.clear();
+                transport.disconnect();
+                have_previous=false;pending_seek=false;
+                expected_seek.reset();expected_pause.reset();
+                session.disconnected(std::string("Internal error: ")+exception.what());
+            }
         }
         reconnect.cancel();cancel_secret();password_token.clear();session.forget_password();
         transport.disconnect();

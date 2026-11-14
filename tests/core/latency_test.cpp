@@ -98,13 +98,22 @@ int main(){
     g.sample(104,104.4);assert(std::abs(g.own()["rtt_ms"].get<double>()-230)<.001);
     // Official 1.7.6 adds its processing/dwell duration to the echoed timestamp.
     g.heartbeat(105);g.receive({{"State",{{"ping",{{"clientLatencyCalculation",105.9}}}}}},106.1);
-    assert(std::abs(g.own()["rtt_ms"].get<double>()-225.5)<.001);
+    // Smoothed to 225.5 ms; status reports whole milliseconds.
+    {const double shown=g.own()["rtt_ms"];assert(shown==std::round(shown)&&std::abs(shown-225.5)<=.5);}
     g.heartbeat(135);g.s.tick(136.2);assert(g.own()["stale"]==true&&g.own()["rtt_ms"].is_null());
     g.s.command({{"action","room"},{"room","newroom"}});
     assert(g.own()["reported"]==false&&g.own()["rtt_ms"].is_null());
     g.s.disconnected();assert(g.own()["enabled"]==true&&g.own()["rtt_ms"].is_null());
     g.s.reconnect();assert(g.own()["rtt_ms"].is_null());
 
+    // The transport stamps arrival. Time spent waiting to be processed is not
+    // network latency, and a stamp later than processing time is not trusted.
+    Fixture arrival;arrival.enable();arrival.heartbeat(200);
+    arrival.s.receive(Json{{"State",{{"ping",{{"clientLatencyCalculation",200}}}}}}.dump(),200.25,200.2);
+    assert(arrival.own()["rtt_ms"]==200);
+    Fixture ahead;ahead.enable();ahead.heartbeat(300);
+    ahead.s.receive(Json{{"State",{{"ping",{{"clientLatencyCalculation",300}}}}}}.dump(),300.1,300.9);
+    assert(ahead.own()["rtt_ms"]==100);
     Fixture empty(false);empty.enable();empty.sample(101,101.1);empty.sent.clear();empty.s.tick(102);
     assert(empty.own()["rtt_ms"].is_number()&&empty.sent.empty());
     empty.s.media_changed();assert(empty.sent[0]["Set"]["file"].empty());
