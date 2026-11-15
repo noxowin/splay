@@ -47,6 +47,11 @@ jobs:
       - name: Test room membership playback policy
         run: python3 tools/check.py room-policy --sanitize
 
+      # Static: every interface text key has an English entry. No player needed.
+      - name: Check interface translation coverage
+        if: ${{ !cancelled() }}
+        run: python3 tools/check.py i18n
+
       # Syntax only. Behavior needs a real player and stays a local check.
       - name: Parse Lua scripts
         if: ${{ !cancelled() }}

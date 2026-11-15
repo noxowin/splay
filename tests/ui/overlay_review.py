@@ -44,7 +44,7 @@ class Player:
                    '--osd-fonts-dir=' + str(args.fonts), '--cursor-autohide=1800',
                    '--script=' + str(fixture / 'splay.lua'),
                    '--script=' + str(ROOT / 'scripts/splay_overlay.lua'),
-                   '--script-opts=splay-overlay_chat_ttl=3,splay-overlay_message_ttl=3,overlay-test-keep=untouched',
+                   '--script-opts=splay-language=zh-CN,splay-overlay_chat_ttl=3,splay-overlay_message_ttl=3,overlay-test-keep=untouched',
                    str(ROOT / '.local/test-media.mp4')]
         if mode == 'uosc': command += ['--script=' + str(args.uosc)]
         self.process = subprocess.Popen(command, cwd=ROOT, stdout=self.log, stderr=subprocess.STDOUT,
@@ -311,6 +311,39 @@ for mode in (('native','uosc') if args.mode=='all' else (args.mode,)):
         assert next(r for r in media_rows if r['kind']=='member' and r['username']=='同伴')['duration_color']=='7777FF',media_rows
         assert any(r['kind']=='media-summary' and '时长不同' in r['text'] and '对方长27秒' in r['text'] for r in media_rows),media_rows
         player.capture('media-check-delta')
+        # English: the main script sends the resolved language in settings. Use
+        # the production English labels to check the fixed-width popup rows.
+        player.state(settings={'language':'en'},local_media={'loaded':True,'title':long_title,'duration':123},
+                     members=[{'username':'本机用户','room':'周末电影','media':{'loaded':True,'title':long_title,'duration':123,'check':'self'}},
+                              {'username':'同伴','room':'周末电影','media':{'loaded':True,'title':long_title,'duration':150,'check':'duration_mismatch','duration_delta':27}}],
+                     autostart={'enabled':True,'delay':5,'pending':True,'remaining':5,'reason':'countdown','participants':2})
+        english_rows=player.geometry()['room_rows']
+        assert any(r['kind']=='media-summary' and r['text'].strip()=='Peer 27 s longer' for r in english_rows),english_rows
+        assert any(r['kind']=='autostart' and r['text']=='Autostart · 5 s' for r in english_rows),english_rows
+        assert any(r['kind']=='playlist' and r['text']=='Shared list · 1 / 2' for r in english_rows),english_rows
+        player.capture('english-room')
+        player.open_popup()
+        english_items=[{'title':'Disable splay','value':'toggle-enabled'},
+            {'title':'syncplay.pl:8999 · Weekend movie night','popup_title':'syncplay.pl:8999','subtitle':'Weekend movie night','value':'connection'},
+            {'title':'Not ready','value':'ready'},
+            {'title':'Cancel autostart (5 s)','popup_title':'Cancel autostart','subtitle':'Starts in 5 s','value':'autostart-cancel'},
+            {'title':'Shared playlist','value':'playlist'},{'title':'Room functions','value':'room-actions'},
+            {'title':'Settings','value':'settings'},{'title':'Disconnect','value':'disconnect'}]
+        player.cmd('script-message-to','splay_overlay','splay-menu-model',json.dumps({'title':'splay | Connected','enabled':True,'items':english_items}))
+        time.sleep(.2)
+        english_popup=player.geometry()
+        assert [r['title'] for r in english_popup['rows']]==[i.get('popup_title',i['title']) for i in english_items],english_popup['rows']
+        assert not any(r['expand'] for r in english_popup['rows']),'English home rows fit without the full-menu fallback'
+        player.capture('english-popup')
+        player.close_menu()
+        player.open_popup()
+        player.cmd('script-message-to','splay_overlay','splay-menu-model',json.dumps({
+            'title':'splay | Connected','items':[{'title':'A very long English action label '*6,'value':'long-'+str(index)} for index in range(20)]}))
+        time.sleep(.2)
+        assert player.geometry()['rows'][-1]['title']=='Show full menu',player.geometry()['rows'][-1]
+        player.close_menu()
+        player.state(settings={'language':'zh-CN'})
+        assert any(r['kind']=='playlist' and '1 / 2' in r['text'] and '项' in r['text'] for r in player.geometry()['room_rows'])
         # Scrolling mode keeps the existing video filter chain unless the
         # explicit smooth option is enabled. Exercise the real fps filter,
         # ownership, mode changes and console suppression during playback.
@@ -564,7 +597,7 @@ for mode in (('native','uosc') if args.mode=='all' else (args.mode,)):
             assert player.get('options/script-opts')['uosc-controls']==foreign_controls
             assert player.get('options/script-opts')['overlay-test-later']=='preserved'
         player.capture('hidden')
-        results.append({'mode':mode,'passed':True,'adaptive_popup':True,'media_delta':True,'autostart_countdown':True,'countdown_cancel_click':True,'short_countdown_status':True})
+        results.append({'mode':mode,'passed':True,'english_rows':True,'adaptive_popup':True,'media_delta':True,'autostart_countdown':True,'countdown_cancel_click':True,'short_countdown_status':True})
         print(mode+': transient TTL/dedup/bounds, colored room/files/playlist, pause/idle/mouse/cursor policy, chat icon clicks, popup/timeline/foreign menus, resize, binding stability and controls ownership passed',flush=True)
     finally:
         player.close()

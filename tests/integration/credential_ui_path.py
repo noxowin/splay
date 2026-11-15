@@ -284,7 +284,7 @@ end
             wait_for('unmodified password-protected ' + name + ' listens', lambda port=port: listening(port))
         (config / 'script-opts/splay.conf').write_text(
             'host=127.0.0.1\nport=' + str(port_a) + '\nusername=credential-ui\nroom=' + room +
-            '\ntls=off\nremember_password=yes\n', encoding='utf-8')
+            '\ntls=off\nremember_password=yes\nlanguage=zh-CN\n', encoding='utf-8')
         first = Player('first-process')
         first.action('toggle-enabled')
         with StoreLock():

@@ -36,7 +36,7 @@ for uosc in (False, True):
     args=[str(mpv),'--no-config','--load-scripts=no','--config-dir='+str(config),'--idle=yes','--force-window=yes','--geometry=1100x800','--ao=null','--pause=yes',
           '--osd-fonts-dir='+str(root/'.local/uosc/fonts'),
           '--script='+str(root/'scripts/splay.lua'),'--script='+str(root/'tests/ui/driver.lua'),
-          '--script-opts=driver-mode='+mode+',driver-output='+str(config.resolve()),str(root/'.local/test-media.mp4')]
+          '--script-opts=splay-language=zh-CN,driver-mode='+mode+',driver-output='+str(config.resolve()),str(root/'.local/test-media.mp4')]
     if uosc: args+=['--script='+str(opts.uosc)]
     result=run_player(args)
     text=result.stdout.decode('utf-8',errors='replace')

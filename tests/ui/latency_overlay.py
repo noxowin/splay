@@ -52,7 +52,9 @@ def main():
         except OSError:
             return False
 
+    # The main script sends the resolved interface language; pin Chinese here.
     state = {'schema': 1, 'enabled': True, 'connection': 'connected', 'room': 'synthetic', 'username': 'me',
+        'settings': {'language': 'zh-CN'},
         'members': [{'username': 'me', 'room': 'synthetic', 'ready': True},
                     {'username': 'peer', 'room': 'synthetic'},
                     {'username': 'official', 'room': 'synthetic'}]}
@@ -144,6 +146,17 @@ def main():
         assert countdown_snapshot['autostart_remaining'] == 5
         assert any(row['kind'] == 'autostart' and '5 秒' in row['text'] for row in countdown_snapshot['room_rows'])
         assert countdown_snapshot['notification_count'] == media_snapshot['notification_count'] == 0
+        # English rows come from the same state once settings carry 'en'.
+        state['settings'] = {'language': 'en'}
+        english_snapshot = publish()
+        english_summary = next(row['text'] for row in english_snapshot['room_rows']
+                               if row['kind'] == 'media-summary' and row['username'] == 'peer')
+        assert english_summary.strip() == 'Peer 12.3 s longer', english_summary
+        assert any(row['kind'] == 'autostart' and row['text'] == 'Autostart · 5 s' for row in english_snapshot['room_rows'])
+        assert next(row for row in english_snapshot['room_rows']
+                    if row['kind'] == 'member' and row['username'] == 'official')['duration'] == 'unknown'
+        state['settings'] = {'language': 'zh-CN'}
+        assert any(row['kind'] == 'autostart' and '5 秒' in row['text'] for row in publish()['room_rows']), 'switch back'
         state['autostart'].update(remaining=2)
         assert publish()['autostart_remaining'] == 2
         state['autostart'].update(pending=False, reason='waiting-reset')
@@ -153,9 +166,10 @@ def main():
         (output / 'result.json').write_text(json.dumps({'passed': True, 'network_mocked': True,
             'numeric_rows': snapshot['room_rows'], 'default_off': True, 'unknown_and_stale': True,
             'media_delta_rows': media_snapshot['room_rows'], 'countdown_rows': countdown_snapshot['room_rows'],
+            'english_rows': english_snapshot['room_rows'],
             'autostart_default_off': True, 'countdown_no_notification_spam': True},
             ensure_ascii=False, indent=2), encoding='utf-8')
-        print('PASS: actual mpv overlay default-off, inline latency, name clipping, unknown, stale and re-disable:', output)
+        print('PASS: actual mpv overlay default-off, inline latency, name clipping, unknown, stale, re-disable and English rows:', output)
     finally:
         if pipe:
             pipe.close()
