@@ -62,6 +62,23 @@ static void offset_and_public_name_tests(){
  assert(offline_applied.back().position==0);
  offline.command({{"action","set-offset"},{"seconds",0}},100);
  assert(offline_applied.back().position==40);
+ // With no offset and no connection the adapter stops watching the player, so
+ // a seek made meanwhile reaches the core only as the sample taken for the
+ // next offset command. That offset starts from there, not from the old reference.
+ assert(offline.idle());media.position=90;offline.playback(media);
+ offline.command({{"action","set-offset"},{"seconds",-1}},101);
+ assert(offline_applied.back().position==89);
+ // The same after a connection ends: the last room position is no reference
+ // for a player that has been moved since.
+ Session gone;gone.command({{"action","room-policy"},{"pause_on_join",false},{"pause_on_leave",false}});std::vector<Correction> gone_applied;
+ gone.send=[](const Json&){};gone.apply=[&](const Correction& c){gone_applied.push_back(c);};
+ media.position=40;gone.playback(media);gone.configure("localhost",8999,"me","room","");gone.connected(false,100);
+ gone.receive(R"({"Hello":{"username":"me","room":{"name":"room"},"version":"1.7.6"}})",100);
+ gone.receive(R"({"State":{"playstate":{"position":40,"paused":true}}})",101);
+ gone.disconnected();assert(gone.idle());
+ media.position=70;gone.playback(media);
+ gone.command({{"action","set-offset"},{"seconds",5}},102);
+ assert(gone_applied.back().position==75);
 
  Session names;names.command({{"action","room-policy"},{"pause_on_join",false},{"pause_on_leave",false}});std::vector<Json> metadata;
  names.send=[&](const Json& packet){metadata.push_back(packet);};

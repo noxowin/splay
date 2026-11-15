@@ -1,8 +1,8 @@
-splay v0.1.0 - Windows x64
+splay v0.1.1 - Windows x64 (pre-release)
 
 English: docs/install.md | Chinese: docs/install.zh-CN.md
-Validation and limits: docs/validation-v0.1.0.md
-Source/downloads: https://github.com/noxowin/splay/releases/tag/v0.1.0
+Validation and limits: docs/validation-v0.1.1.md
+Source/downloads: https://github.com/noxowin/splay/releases/tag/v0.1.1
 Use the matching source tag. GitHub Actions artifacts are development builds.
 
 INSTALL / UPGRADE

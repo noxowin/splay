@@ -10,6 +10,6 @@
 | 官方 GUI、Lua 显示或 Python 依赖 | 不直接更新本项目；可能影响测试工具或提示类似问题 |
 | TLS 实现 | splay 使用 Windows Schannel，不继承 pyOpenSSL 修复；仍需跟进服务端兼容性 |
 
-当前已验证的协议基线是 [Syncplay 1.7.6](https://github.com/Syncplay/syncplay/releases/tag/v1.7.6)，测试范围见 [v0.1.0 验证记录](validation-v0.1.0.md)。这表示测试所用版本，不代表上游最新版本；共享列表已支持，已观看标记尚未实现。
+当前已验证的协议基线是 [Syncplay 1.7.6](https://github.com/Syncplay/syncplay/releases/tag/v1.7.6)，测试范围见 [v0.1.1 验证记录](validation-v0.1.1.md)。这表示测试所用版本，不代表上游最新版本；共享列表已支持，已观看标记尚未实现。
 
 维护时先查看 [官方更新记录](https://syncplay.pl/changelog/) 和 [源码](https://github.com/Syncplay/syncplay)，固定待验证版本或提交，再评估协议、权限、同步和 mpv 适配变化。相关修改须通过未修改的官方服务端与客户端联调，并更新验证记录，不自动合并上游代码或改写用户配置。

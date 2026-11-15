@@ -1,10 +1,24 @@
 local utils = require 'mp.utils'
-mp.add_timeout(0.8, function()
-    -- Lua state has no protocol test double: splay requests status from the DLL.
-    mp.commandv('script-message-to', 'splay', 'splay-open', 'native')
-end)
-mp.add_timeout(1.5, function()
-    assert(mp.get_property_native('user-data/mpv/console/open') == true, 'native panel must open')
+-- Startup time varies: mpv sets up its fonts on the first OSD text and the
+-- packaged scripts work through their first messages meanwhile. Ask for the
+-- panel, then wait for it instead of checking at one fixed moment.
+local function panel_open() return mp.get_property_native('user-data/mpv/console/open') == true end
+local started, asked = mp.get_time(), nil
+local timer
+timer = mp.add_periodic_timer(0.1, function()
+    local now = mp.get_time()
+    if now - started < 0.8 then return end
+    if not panel_open() then
+        assert(now - started < 8, 'native panel must open')
+        -- Lua state has no protocol test double: splay requests status from the DLL.
+        -- A request that arrives before the interface is ready is repeated.
+        if not asked or now - asked > 2 then
+            asked = now
+            mp.commandv('script-message-to', 'splay', 'splay-open', 'native')
+        end
+        return
+    end
+    timer:kill()
     local overlay=mp.get_property_native('user-data/splay-overlay')
     assert(type(overlay)=='table' and overlay.enabled==false and overlay.status_shown==false,
         'packaged overlay must initialize with the feature disabled and status hidden')

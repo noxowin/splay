@@ -1036,6 +1036,10 @@ namespace splay {
             const double offset=c["seconds"].get<double>();
             if(!std::isfinite(offset)||std::abs(offset)>86400)throw std::runtime_error("Time offset must be a number from -86400 to 86400 seconds");
             if(offset!=timeOffset_){
+                // While idle() the adapter does not watch the player, so a
+                // reference kept from an earlier offset or connection may be
+                // older than a seek made since. Start from where the player is.
+                if(idle())haveRoomPosition_=offsetBoundaryHold_=false;
                 const double position=(haveRoomPosition_||offsetBoundaryHold_)?room_position():local_.position-timeOffset_;
                 if(!haveRoomPosition_){
                     // Preserve this reference even if the new offset clamps

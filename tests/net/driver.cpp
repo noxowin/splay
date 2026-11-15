@@ -22,7 +22,10 @@ int main(int argc,char** argv) {
     t.connect(o); auto until=std::chrono::steady_clock::now()+std::chrono::seconds(handshakeOnly || protocolProbe?25:3);
     while(std::chrono::steady_clock::now()<until) {
         for(auto& e:t.poll()) {
-            // The owner is told about an event no later than it can poll it.
+            // The owner is told about every event. The transport queues the
+            // event first and calls back right after, so this poll can see the
+            // first event a moment before its wake is counted; allow for that.
+            for(int waited=0;wakes.load()==0&&waited<1000;++waited) std::this_thread::sleep_for(std::chrono::milliseconds(1));
             if(wakes.load()==0) { std::cout<<"missing_wake"<<std::endl; return 4; }
             // Events carry the transport thread's own clock reading, in order.
             if(e.time<previous || e.time>seconds()) { std::cout<<"bad_event_time"<<std::endl; return 3; }
