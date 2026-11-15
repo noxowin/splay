@@ -2,24 +2,44 @@
 
 The synchronization core suites (core, reconnect, latency, autostart,
 room-policy) are portable C++ and also run on Linux; the others use Windows APIs.
+The lua suite only parses the scripts and runs wherever LuaJIT or luac is installed.
 """
 from pathlib import Path
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from build import ROOT, default_compiler
 
 parser = argparse.ArgumentParser()
-parser.add_argument('suite', choices=['core', 'reconnect', 'latency', 'autostart', 'room-policy', 'history', 'credentials', 'net', 'ui', 'ui-review', 'ui-history', 'tls-rejection'])
+parser.add_argument('suite', choices=['core', 'reconnect', 'latency', 'autostart', 'room-policy', 'history', 'credentials', 'net', 'ui', 'ui-review', 'ui-history', 'tls-rejection', 'lua'])
 parser.add_argument('--compiler', default=default_compiler())
 parser.add_argument('--sanitize', action='store_true',
                     help='Build the portable core suites with AddressSanitizer and UndefinedBehaviorSanitizer (not MinGW)')
+parser.add_argument('--lua', help='LuaJIT or luac executable for the lua suite; default: first found on PATH')
 args = parser.parse_args()
 
 WINDOWS = os.name == 'nt'
 CORE_SUITES = {'core':'session_test.cpp','reconnect':'reconnect_test.cpp','latency':'latency_test.cpp',
                'autostart':'autostart_test.cpp','room-policy':'room_policy_test.cpp'}
+if args.suite == 'lua':
+    # Parse only: a syntax error is caught here instead of when a player loads
+    # the script. mpv's Windows builds use LuaJIT, so prefer it.
+    tool = args.lua or shutil.which('luajit') or shutil.which('luac5.1') or shutil.which('luac')
+    if not tool:
+        raise SystemExit('The lua suite needs luajit or luac on PATH, or --lua')
+    parse = [tool, '-bl'] if 'luajit' in Path(tool).name.lower() else [tool, '-p']
+    files = sorted(path for folder in ('scripts', 'tests') for path in (ROOT/folder).rglob('*.lua'))
+    if not files:
+        raise SystemExit('No Lua files found')
+    # The parser prints file, line and reason itself; report every bad file.
+    failed = [path for path in files
+              if subprocess.run([*parse, str(path)], cwd=ROOT, timeout=60, stdout=subprocess.DEVNULL).returncode]
+    if failed:
+        raise SystemExit('Lua syntax errors in: ' + ', '.join(str(path.relative_to(ROOT)) for path in failed))
+    print(f'Lua syntax: {len(files)} files parsed with {Path(tool).name}')
+    raise SystemExit(0)
 if not WINDOWS and args.suite not in CORE_SUITES:
     raise SystemExit(f'The {args.suite} suite uses Windows APIs; only the core suites run on this platform')
 if args.sanitize and (WINDOWS or args.suite not in CORE_SUITES):
