@@ -74,6 +74,7 @@ local controls = CONTROLS
 local state = {}
 local events = {}
 local errors = {}
+local latency
 local sequence = -1
 mp.register_script_message('splay-state', function(s)
     state = utils.parse_json(s) or {}
@@ -84,6 +85,9 @@ mp.register_script_message('splay-state', function(s)
         if #errors > 100 then table.remove(errors, 1) end
     end
 end)
+-- Round-trip times have their own message. Keep the raw JSON: an empty member
+-- object would come back from a Lua table as an array.
+mp.register_script_message('splay-latency', function(s) latency = s end)
 mp.register_script_message('splay-event', function(s)
     -- Keep raw JSON so mpv's NUL-terminated node strings cannot truncate text
     -- while serializing our observation snapshot.
@@ -102,7 +106,7 @@ mp.add_periodic_timer(0.1, function()
     local result = {position=mp.get_property_native('time-pos'),
         paused=mp.get_property_native('pause'), path=mp.get_property('path'),
         media_title=mp.get_property('media-title'),
-        duration=mp.get_property_native('duration'), state=state, event_json=events, errors=errors}
+        duration=mp.get_property_native('duration'), state=state, latency_json=latency, event_json=events, errors=errors}
     local out = io.open(destination .. '.tmp', 'w')
     if out then
         out:write(utils.format_json(result)); out:close()
@@ -127,6 +131,8 @@ class Player:
             try:
                 result = json.loads(self.snapshot.read_text(encoding='utf-8'))
                 result['events'] = [json.loads(value) for value in result.pop('event_json', [])]
+                latency = result.pop('latency_json', None)
+                result['latency'] = json.loads(latency) if latency else {}
                 return result
             except (FileNotFoundError, json.JSONDecodeError, PermissionError):
                 if attempt == 24:

@@ -53,13 +53,14 @@ def main():
             return False
 
     state = {'schema': 1, 'enabled': True, 'connection': 'connected', 'room': 'synthetic', 'username': 'me',
-        'latency': {'enabled': False, 'rtt_ms': 42, 'reported': True, 'stale': False},
         'members': [{'username': 'me', 'room': 'synthetic', 'ready': True},
-                    {'username': 'peer', 'room': 'synthetic', 'latency': {'rtt_ms': 125, 'reported': True}},
-                    {'username': 'official', 'room': 'synthetic', 'latency': {'rtt_ms': None, 'reported': False}}]}
+                    {'username': 'peer', 'room': 'synthetic'},
+                    {'username': 'official', 'room': 'synthetic'}]}
+    # Round-trip times travel in their own message; members without a report are absent.
+    latency = {'schema': 1, 'enabled': False, 'self': {'rtt_ms': 42, 'reported': True, 'stale': False},
+               'members': {'peer': {'rtt_ms': 125, 'reported': True}}}
 
-    def publish():
-        command('script-message-to', 'splay_overlay', 'splay-state', json.dumps(state))
+    def snapshot_now():
         time.sleep(.15)
         try:
             return command('get_property', 'user-data/splay-overlay')
@@ -67,6 +68,14 @@ def main():
             if 'property not found' in str(error):
                 return {}
             raise
+
+    def publish_latency(raw=None):
+        command('script-message-to', 'splay_overlay', 'splay-latency', json.dumps(latency) if raw is None else raw)
+        return snapshot_now()
+
+    def publish():
+        command('script-message-to', 'splay_overlay', 'splay-state', json.dumps(state))
+        return publish_latency()
 
     def latency_rows(snapshot):
         return {row['username']: row['latency'] for row in snapshot.get('room_rows', [])
@@ -76,11 +85,23 @@ def main():
         wait_for('minimized offline mpv IPC opens', connect)
         wait_for('overlay publishes bounded room geometry', lambda: publish().get('room_panel_visible'))
         assert not latency_rows(publish()), 'Default off should show no latency rows'
-        state['latency']['enabled'] = True
-        snapshot = publish()
-        values = latency_rows(snapshot)
+        latency['enabled'] = True
+        # The latency message alone, with no state resent, updates the visible rows.
+        values = latency_rows(publish_latency())
         assert values['me']=='42 ms' and values['peer']=='125 ms',values
         assert 'official' not in values
+        latency['self']['rtt_ms'], latency['members']['peer']['rtt_ms'] = 57, 260
+        values = latency_rows(publish_latency())
+        assert values['me']=='57 ms' and values['peer']=='260 ms',values
+        for malformed in ('', '{', '[]', json.dumps(dict(latency, schema=2)), json.dumps({'schema': 1, 'enabled': True})):
+            assert latency_rows(publish_latency(malformed)) == values, malformed
+        # A state without any latency fields keeps the values already received.
+        command('script-message-to', 'splay_overlay', 'splay-state', json.dumps(state))
+        assert latency_rows(snapshot_now()) == values
+        latency['self']['rtt_ms'], latency['members']['peer']['rtt_ms'] = 42, 125
+        snapshot = publish_latency()
+        values = latency_rows(snapshot)
+        assert values['me']=='42 ms' and values['peer']=='125 ms',values
         members={r['username']:r for r in snapshot['room_rows'] if r['kind']=='member'}
         assert members['me']['latency_color']=='80E692' and members['peer']['latency_color']=='75DAFF',members
         state['members'][0]['ready']=False
@@ -90,17 +111,24 @@ def main():
         assert len({r['duration_x'] for r in changed['room_rows'] if r['kind']=='member'})==1
         assert not any(row.get('kind') == 'latency' for row in snapshot['room_rows'])
         assert next(row['text'] for row in snapshot['room_rows'] if row['kind'] == 'room') == 'synthetic'
-        state['members'][1]['username'] = 'peer-with-a-very-long-name-' * 8
+        long_name = 'peer-with-a-very-long-name-' * 8
+        state['members'][1]['username'] = long_name
+        latency['members'][long_name] = latency['members'].pop('peer')
         values = latency_rows(publish())
-        assert values[state['members'][1]['username']]=='125 ms', values
+        assert values[long_name]=='125 ms', values
         state['members'][1]['username'] = 'peer'
-        state['latency'].update(rtt_ms=None, reported=False)
-        state['members'][1]['latency'].update(rtt_ms=None, stale=True)
+        latency['members']['peer'] = latency['members'].pop(long_name)
+        latency['self'].update(rtt_ms=None, reported=False)
+        latency['members']['peer'].update(rtt_ms=None, stale=True)
         values = latency_rows(publish())
         assert not values,values
-        state['members'][1]['latency'].update(rtt_ms=-10, stale=False)
+        latency['members']['peer'].update(rtt_ms=-10, stale=False)
         assert 'peer' not in latency_rows(publish())
-        state['latency']['enabled'] = False
+        latency['members']['peer'].update(rtt_ms=125)
+        assert latency_rows(publish()).get('peer') == '125 ms'
+        del latency['members']['peer']
+        assert 'peer' not in latency_rows(publish()), 'a member that withdrew its report shows none'
+        latency['enabled'] = False
         assert not latency_rows(publish())
         state['local_media'] = {'loaded': True, 'title': '本机影片.mp4', 'duration': 120}
         state['members'][1]['media'] = {'loaded': True, 'title': '同伴影片.mp4', 'duration': 132.3,

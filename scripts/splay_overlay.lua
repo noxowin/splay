@@ -7,6 +7,8 @@ local cfg = {status_osd=true, button_enabled=true, button_bottom=48, button_righ
     overlay_font_size=22, danmaku_font_scale=1.15, overlay_chat_ttl=5, overlay_chat_lines=4,
     overlay_message_ttl=5, room_panel=true, room_idle_timeout=3, chat_mode='room',danmaku_smooth=false}
 local state = {enabled=false, connection='disconnected', members={}}
+-- Round-trip times arrive in their own splay-latency message, not in the state.
+local latency = {enabled=false, members={}}
 local chats, playback, notices, seen, seen_order = {}, nil, {}, {}, {}
 local status = mp.create_osd_overlay('ass-events')
 local buttons = mp.create_osd_overlay('ass-events')
@@ -475,8 +477,8 @@ local function queue_danmaku(item)
     return false
 end
 local function latency_signal(member, own)
-    if type(state.latency)~='table' or state.latency.enabled~=true then return nil end
-    local value=own and state.latency or member.latency
+    if latency.enabled~=true then return nil end
+    local value=own and latency.self or latency.members[member.username]
     if type(value)~='table' or value.reported~=true or value.stale==true then return nil end
     local rtt=value.rtt_ms
     if type(rtt)~='number' or rtt~=rtt or rtt<0 or rtt>RTT_MAX_MS then return nil end
@@ -1065,6 +1067,14 @@ mp.register_script_message('splay-state',function(json)
     state=value
     if smooth_changed or previous_mode~=cfg.chat_mode or previous_smooth~=cfg.danmaku_smooth then update_smooth_filter() end
     trim_events(); integrate_uosc(); set_uosc_button(); redraw(); update_buttons()
+end)
+mp.register_script_message('splay-latency',function(json)
+    if type(json)~='string' or #json>262144 then return end
+    local value=parse(json)
+    if type(value)~='table' or value.schema~=1 or type(value.members)~='table' then return end
+    latency=value
+    -- Only the room panel shows it; a hidden panel reads the value when drawn.
+    if panel_visible then redraw() end
 end)
 mp.register_script_message('splay-event',function(json)
     if type(json)~='string' or #json>16384 or state.enabled~=true then return end

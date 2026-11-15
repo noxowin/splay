@@ -428,13 +428,7 @@ namespace splay {
             else if(!local_.seekable)warning="Media is not seekable; position synchronization is unavailable";
         }
         Json members=Json::array();
-        for(auto& m:members_){
-            auto value=m.second;
-            value["latency"]=latency(m.first);
-            members.push_back(std::move(value));
-        }
-        auto ownLatency=latency(user_);
-        ownLatency["enabled"]=latencyEnabled_;
+        for(auto& m:members_)members.push_back(m.second);
         return {
             {"schema",1}
             ,{"connection",connection_}
@@ -455,11 +449,19 @@ namespace splay {
             ,{"time_offset",timeOffset_}
             ,{"time_offset_boundary",offsetBoundaryHold_}
             ,{"room_policy",{{"pause_on_leave",pauseOnLeave_},{"pause_on_join",pauseOnJoin_}}}
-            ,{"latency",ownLatency}
             ,{"members",members}
             ,{"autostart",{{"enabled",autostartEnabled_},{"delay",autostartDelay_},{"pending",autostartPending_},
                 {"remaining",autostartRemaining_},{"reason",autostartReason_},{"participants",autostart_members().size()}}}
         };
+    }
+    Json Session::latency_status() const {
+        Json members=Json::object();
+        for(const auto& m:members_){
+            if(m.first==user_)continue;
+            auto value=latency(m.first);
+            if(value["reported"].get<bool>())members[m.first]=std::move(value);
+        }
+        return {{"schema",1},{"enabled",latencyEnabled_},{"self",latency(user_)},{"members",std::move(members)}};
     }
     Json Session::latency(const std::string& user) const {
         Json result={{"rtt_ms",nullptr},{"reported",false},{"stale",false},{"self_reported",user!=user_}};

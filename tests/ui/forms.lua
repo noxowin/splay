@@ -417,13 +417,39 @@ dismiss()
 start();assert(count('latency')==0,'fresh disabled UI must not enable latency sharing')
 act('toggle-enabled');assert(last('latency').enabled==true)
 act('settings');assert(label('延迟显示与共享: 开启'));dismiss()
-state({username='self',latency={enabled=true,rtt_ms=12.4,reported=true,stale=false,self_reported=false},members={
+state({username='self',members={
     {username='self',room='active-room',ready=false},
-    {username='peer',room='active-room',latency={rtt_ms=84.6,reported=true,stale=false,self_reported=true}},
-    {username='official',room='active-room',latency={reported=false,stale=false,self_reported=true}},
-    {username='old',room='active-room',latency={rtt_ms=99,reported=true,stale=true,self_reported=true}},
+    {username='peer',room='active-room'},
+    {username='official',room='active-room'},
+    {username='old',room='active-room'},
 }})
-act('members');assert(label('12 ms') and label('85 ms') and not label('99 ms'),'only valid fresh measurements appear');dismiss()
+act('members');assert(not label(' ms'),'no latency message yet, nothing to show');dismiss()
+-- Latency arrives in its own message: it goes on to the overlay as received
+-- and neither rebuilds the state nor reaches the playlist script.
+local function sent(target,name)
+    local n,payload=0,nil
+    for _,item in ipairs(commands) do if item[2]==target and item[3]==name then n=n+1;payload=item[4] end end
+    return n,payload
+end
+local overlay_states,playlist_states=sent('splay_overlay','splay-state'),sent('splay_playlist','splay-state')
+local reports='{"schema":1,"enabled":true,"self":{"rtt_ms":12.4,"reported":true,"stale":false,"self_reported":false},"members":{'..
+    '"peer":{"rtt_ms":84.6,"reported":true,"stale":false,"self_reported":true},'..
+    '"old":{"rtt_ms":99,"reported":true,"stale":true,"self_reported":true}}}'
+handlers['splay-latency'](reports)
+local forwarded,payload=sent('splay_overlay','splay-latency')
+assert(forwarded==1 and payload==reports,'overlay receives the latency message unchanged')
+assert(sent('splay_overlay','splay-state')==overlay_states and sent('splay_playlist','splay-state')==playlist_states and
+    sent('splay_playlist','splay-latency')==0,'a latency update must not resend the state')
+act('members');assert(label('12 ms') and label('85 ms') and not label('99 ms'),'only valid fresh measurements appear')
+for _,text in ipairs(selected.items) do
+    assert(not ((text:find('official',1,true) or text:find('old',1,true)) and text:find(' ms',1,true)),'unreported and stale members show no value')
+end
+dismiss()
+for _,bad in ipairs({'','{','[]','{"schema":2,"enabled":true,"members":{}}','{"schema":1,"enabled":true}'}) do handlers['splay-latency'](bad) end
+assert(sent('splay_overlay','splay-latency')==1,'malformed latency messages are dropped')
+act('members');assert(label('12 ms') and label('85 ms'),'a malformed message keeps the last valid values');dismiss()
+handlers['splay-overlay-ready']()
+assert(sent('splay_overlay','splay-latency')==2,'an overlay that starts late receives the current latency')
 act('toggle-enabled');assert(last('latency').enabled==false)
 act('toggle-enabled');assert(last('latency').enabled==true,'explicit UI re-enable reapplies the local setting')
 act('toggle-latency');assert(last('latency').enabled==false)

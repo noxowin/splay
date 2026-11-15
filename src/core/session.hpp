@@ -41,6 +41,11 @@ namespace splay {
         void media_changed();
         void tick(double now);
         Json status() const;
+        // Round-trip times change far more often than anything else the
+        // interface shows, so they travel apart from status(): own measurement
+        // under "self", and under "members" only the same-room users that
+        // have reported one, keyed by username.
+        Json latency_status() const;
         bool logged() const {
             return logged_;
         }

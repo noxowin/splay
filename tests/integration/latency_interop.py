@@ -68,6 +68,17 @@ def main():
     def member(name, player=plugin):
         return next((value for value in state(player).get('members', []) if value['username'] == name), {})
 
+    # Round-trip times arrive in splay-latency, apart from the state: the
+    # player's own under "self", and only members that reported one by name.
+    def latency(player=plugin):
+        return player.read()['latency']
+
+    def own(player=plugin):
+        return latency(player).get('self') or {}
+
+    def report(name, player=plugin):
+        return (latency(player).get('members') or {}).get(name) or {}
+
     def log_text():
         return (output / 'official.log').read_text(encoding='utf-8', errors='replace')
 
@@ -109,7 +120,9 @@ def main():
             player.splay('connect', host='127.0.0.1', port=port, username=name, room=room, tls='off')
             wait_for(name + ' connects', lambda p=player: state(p).get('connection') == 'connected')
         wait_for('native List contains both peers and official client', lambda: len(state().get('members', [])) == 3)
-        assert state()['latency']['enabled'] is False and state(peer)['latency']['enabled'] is False
+        wait_for('latency is reported apart from the state, off by default',
+                 lambda: latency().get('enabled') is False and latency(peer).get('enabled') is False)
+        assert 'latency' not in state() and not any('latency' in value for value in state()['members'])
         baseline = server_members()
         for name in ('plugin', 'peer'):
             assert 'splayLatency' not in baseline[name]['file']
@@ -118,15 +131,14 @@ def main():
         notices_before = {name: log_text().count(name + " is playing '") for name in ('plugin', 'peer')}
         plugin.splay('latency', enabled=True)
         wait_for('first native measures RTT using official server heartbeat',
-                 lambda: isinstance(state().get('latency', {}).get('rtt_ms'), (int, float)))
+                 lambda: isinstance(own().get('rtt_ms'), (int, float)))
         wait_for('first native shares optional metadata',
                  lambda: server_members()['plugin']['file'].get('splayLatency'))
-        assert member('peer')['latency'].get('rtt_ms') is None
-        assert member('official')['latency']['reported'] is False
+        assert member('peer') and member('official') and not latency()['members'], latency()
         peer.splay('latency', enabled=True)
         wait_for('two opted-in native clients see each other reported RTT',
-                 lambda: isinstance(member('peer').get('latency', {}).get('rtt_ms'), (int, float))
-                 and isinstance(member('plugin', peer).get('latency', {}).get('rtt_ms'), (int, float)))
+                 lambda: isinstance(report('peer').get('rtt_ms'), (int, float))
+                 and isinstance(report('plugin', peer).get('rtt_ms'), (int, float)))
         plugin.splay('ready', ready=True)
         wait_for('explicit readiness is set before repeated metadata', lambda: state()['ready'] is True)
         before = server_members()
@@ -149,7 +161,7 @@ def main():
         assert all(event.get('action') != 'file' for event in plugin.read()['events']
                    if event.get('username') == 'peer' and event.get('id', 0) > event_baseline)
         assert 'splayLatency' not in member('peer')['file']
-        assert member('peer')['latency']['self_reported'] is True
+        assert report('peer')['self_reported'] is True and 'official' not in latency()['members']
         offset = len(log_text())
         cli_command('list')
         wait_for('unmodified official client still displays members and readiness normally',
@@ -163,27 +175,25 @@ def main():
         wait_for('disabling sharing removes metadata without changing basic file',
                  lambda: 'splayLatency' not in server_members()['plugin']['file'])
         wait_for('other opted-in native sees immediate withdrawal as unreported',
-                 lambda: member('plugin', peer).get('latency', {}).get('reported') is False)
+                 lambda: 'plugin' not in (latency(peer).get('members') or {}))
         # The observer rewrites its snapshot every 100 ms, and the peer can now
         # show the withdrawal before this player's next snapshot is on disk.
-        wait_for('disabling sharing clears own displayed RTT', lambda: state()['latency'].get('rtt_ms') is None)
+        wait_for('disabling sharing clears own displayed RTT', lambda: latency().get('enabled') is False and own().get('rtt_ms') is None)
         peer.command('stop')
         wait_for('empty media sends no fake file metadata', lambda: server_members()['peer'].get('file') == {})
         wait_for('own RTT remains measurable while no media is loaded',
-                 lambda: isinstance(state(peer)['latency']['rtt_ms'], (int, float)))
+                 lambda: isinstance(own(peer).get('rtt_ms'), (int, float)))
         plugin.splay('latency', enabled=True)
         wait_for('remaining peer gets an explicitly re-enabled valid report',
-                 lambda: isinstance(member('plugin', peer).get('latency', {}).get('rtt_ms'), (int, float)))
+                 lambda: isinstance(report('plugin', peer).get('rtt_ms'), (int, float)))
         plugin.splay('room', room=room + '-other')
-        wait_for('room change clears peer reports and own RTT sample',
-                 lambda: state()['room'] == room + '-other' and not any(
-                     value.get('latency', {}).get('rtt_ms') is not None for value in state()['members']
-                     if value.get('username') != 'plugin'))
+        wait_for('room change clears peer reports',
+                 lambda: state()['room'] == room + '-other' and not latency()['members'])
         result = {'passed': True, 'official_version': '1.7.6',
             'default_off': True, 'two_native_heartbeat_rtts': True, 'periodic_metadata': True,
             'official_file_notice_count_unchanged': notices_before, 'official_list_and_ready': True,
             'official_seek_and_media_preserved': True, 'withdrawal': True, 'empty_media_no_fake_file': True,
-            'final_native_state': state()}
+            'final_native_state': state(), 'final_native_latency': latency()}
         (output / 'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
         print('PASS: latency interoperability and official-client metadata compatibility:', output, flush=True)
     finally:
