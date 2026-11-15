@@ -171,7 +171,10 @@ struct Transport::Impl {
         settings.grbitEnabledProtocols = SP_PROT_TLS1_2_CLIENT;
         // Cached chain/revocation data prevents certificate validation from doing
         // uninterruptible network retrieval on the transport worker.
-        settings.dwFlags = SCH_CRED_AUTO_CRED_VALIDATION | SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_CACHE_ONLY_URL_RETRIEVAL;
+        // SCH_USE_STRONG_CRYPTO makes Schannel refuse the weak algorithms it
+        // still knows (RC4, DES, export and null ciphers), whatever the
+        // system-wide cipher configuration allows.
+        settings.dwFlags = SCH_CRED_AUTO_CRED_VALIDATION | SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_CACHE_ONLY_URL_RETRIEVAL | SCH_USE_STRONG_CRYPTO;
         TimeStamp expiry{};
         auto credentialStatus = AcquireCredentialsHandleW(nullptr, const_cast<wchar_t*>(UNISP_NAME_W), SECPKG_CRED_OUTBOUND, nullptr, &settings, nullptr, nullptr, &cred, &expiry);
         if (credentialStatus != SEC_E_OK) throw std::runtime_error("TLS credentials failed (" + std::to_string(static_cast<unsigned long>(credentialStatus)) + ")");
