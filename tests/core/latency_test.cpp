@@ -21,8 +21,19 @@ struct Fixture {
     void heartbeat(double now){receive({{"State",{{"ping",Json::object()}}}},now);}
     void sample(double sent_at,double received){heartbeat(sent_at);receive({{"State",{{"ping",{{"clientLatencyCalculation",sent_at}}}}}},received);}
     void enable(){s.command({{"action","latency"},{"enabled",true}});}
-    Json own(){return s.status()["latency"];}
-    Json peer(){const auto snapshot=s.status();for(const auto& member:snapshot["members"])if(member["username"]=="peer")return member["latency"];return Json();}
+    bool enabled(){return s.latency_status()["enabled"];}
+    Json own(){return s.latency_status()["self"];}
+    // Null when peer is not a member; a member without a report is left out of
+    // the latency message, which reads as an unreported value.
+    Json peer(){
+        bool member=false;
+        const auto snapshot=s.status();
+        for(const auto& value:snapshot["members"])if(value["username"]=="peer")member=true;
+        if(!member)return Json();
+        const auto reports=s.latency_status()["members"];
+        return reports.contains("peer")?reports["peer"]:Json{{"rtt_ms",nullptr},{"reported",false},{"stale",false},{"self_reported",true}};
+    }
+    bool listed(){return s.latency_status()["members"].contains("peer");}
     void listing(const Json& metadata,double now,const std::string& room="room"){
         Json file={{"name","same.mkv"},{"duration",300},{"size",123}};
         if(!metadata.is_null())file["splayLatency"]=metadata;
@@ -34,7 +45,9 @@ static Json report(int seq=1,double value=125,const std::string& session="sessio
 }
 int main(){
     Fixture f;
-    assert(f.own()["enabled"]==false&&f.own()["rtt_ms"].is_null());
+    assert(f.enabled()==false&&f.own()["rtt_ms"].is_null());
+    // The main state carries no latency at all; it has its own message.
+    assert(f.s.latency_status()["schema"]==1&&f.s.latency_status()["members"].empty()&&!f.s.status().contains("latency"));
     f.sample(101,101.2);f.s.tick(101.3);
     for(const auto& value:f.sent)if(value.contains("Set"))assert(!value["Set"].contains("file"));
     f.enable();
@@ -48,21 +61,23 @@ int main(){
     f.heartbeat(111.3);f.sent.clear();f.s.tick(111.4);
     assert(f.sent.size()==1&&f.sent[0]["Set"]["file"]["splayLatency"]["seq"]==2);
     assert(f.sent[0]["Set"]["file"]["splayLatency"]["session"]==firstSession);
+    f.listing(nullptr,111.5);assert(!f.listed()); // A member without a report is not listed.
     f.listing(report(),112);assert(f.peer()["rtt_ms"]==125&&f.peer()["self_reported"]==true);
+    assert(f.listed()&&!f.s.latency_status()["members"].contains("me")); // Own value is only under "self".
     f.receive({{"Set",{{"user",{{"peer",{{"file",{{"name","same.mkv"},{"duration",300},{"size",123},{"splayLatency",report(2,145)}}}}}}}}}},113);
     assert(f.peer()["rtt_ms"]==145);
     for(const auto& event:f.events)assert(event.value("action","")!="file");
-    const auto snapshot=f.s.status();for(const auto& member:snapshot["members"])assert(!member["file"].contains("splayLatency"));
+    const auto snapshot=f.s.status();for(const auto& member:snapshot["members"])assert(!member["file"].contains("splayLatency")&&!member.contains("latency"));
     f.receive({{"Set",{{"user",{{"peer",{{"isReady",false}}}}}}}},114);
     assert(f.peer()["rtt_ms"]==145); // Partial readiness updates preserve reports.
     f.listing(report(2,145),130);f.listing(report(1,999),142);
     assert(f.peer()["rtt_ms"]==145); // Older sequence cannot replace fresh data.
     f.heartbeat(143.1);f.s.tick(143.2);
-    assert(f.peer()["stale"]==true&&f.peer()["rtt_ms"].is_null());
+    assert(f.peer()["stale"]==true&&f.peer()["rtt_ms"].is_null()&&f.listed()); // Stale stays listed, without a value.
     f.listing(report(2,145),144);
     assert(f.peer()["stale"]==true); // Duplicate authoritative List does not renew TTL.
     f.listing(report(3,0),145);assert(f.peer()["rtt_ms"]==0&&f.peer()["stale"]==false);
-    f.listing(nullptr,146);assert(f.peer()["reported"]==false);
+    f.listing(nullptr,146);assert(f.peer()["reported"]==false&&!f.listed());
     f.listing(report(3,0),147);assert(f.peer()["reported"]==false); // Withdrawal cannot replay old metadata.
     std::vector<Json> invalid;
     for(const auto& change:std::vector<Json>{Json{{"v",2}},Json{{"v",1.0}},Json{{"seq",1.5}},Json{{"seq",-1}},
@@ -73,11 +88,11 @@ int main(){
     invalid.push_back(Json::array());invalid.push_back(Json{{"v",1}});
     for(const auto& value:invalid){f.listing(value,148);assert(f.peer()["rtt_ms"].is_null()&&f.s.logged());}
     f.listing(report(5,10000),149);assert(f.peer()["rtt_ms"]==10000);
-    f.listing(report(6),150,"elsewhere");assert(f.peer()["rtt_ms"].is_null());
+    f.listing(report(6),150,"elsewhere");assert(f.peer()["rtt_ms"].is_null()&&!f.listed());
     f.listing(report(7),151);f.receive({{"Set",{{"user",{{"peer",{{"event",{{"left",true}}}}}}}}}},152);
-    assert(f.peer().is_null());
+    assert(f.peer().is_null()&&!f.listed());
     f.listing(report(8),153);f.s.command({{"action","latency"},{"enabled",false}});
-    assert(f.own()["rtt_ms"].is_null()&&f.peer()["rtt_ms"].is_null());
+    assert(f.own()["rtt_ms"].is_null()&&f.peer()["rtt_ms"].is_null()&&!f.listed()&&f.enabled()==false);
     f.s.command({{"action","latency"},{"enabled",true}});
     assert(f.peer()["rtt_ms"].is_null());
     f.sample(154,154.1);f.sent.clear();f.s.tick(154.2);
@@ -95,7 +110,10 @@ int main(){
     g.sample(102,102.2);double measured=g.own()["rtt_ms"];
     g.receive({{"State",{{"ping",{{"clientLatencyCalculation",102}}}}}},103);
     assert(g.own()["rtt_ms"]==measured);
-    g.sample(104,104.4);assert(std::abs(g.own()["rtt_ms"].get<double>()-230)<.001);
+    // A new measurement changes the latency message and nothing in the main state.
+    {const auto state=g.s.status();const auto shown=g.s.latency_status();
+     g.sample(104,104.4);assert(g.s.status()==state&&g.s.latency_status()!=shown);}
+    assert(std::abs(g.own()["rtt_ms"].get<double>()-230)<.001);
     // Official 1.7.6 adds its processing/dwell duration to the echoed timestamp.
     g.heartbeat(105);g.receive({{"State",{{"ping",{{"clientLatencyCalculation",105.9}}}}}},106.1);
     // Smoothed to 225.5 ms; status reports whole milliseconds.
@@ -103,7 +121,7 @@ int main(){
     g.heartbeat(135);g.s.tick(136.2);assert(g.own()["stale"]==true&&g.own()["rtt_ms"].is_null());
     g.s.command({{"action","room"},{"room","newroom"}});
     assert(g.own()["reported"]==false&&g.own()["rtt_ms"].is_null());
-    g.s.disconnected();assert(g.own()["enabled"]==true&&g.own()["rtt_ms"].is_null());
+    g.s.disconnected();assert(g.enabled()==true&&g.own()["rtt_ms"].is_null());
     g.s.reconnect();assert(g.own()["rtt_ms"].is_null());
 
     // The transport stamps arrival. Time spent waiting to be processed is not

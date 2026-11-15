@@ -87,16 +87,23 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
         // The core reports a change for every server heartbeat. Forward a
         // state only when its content differs from the last delivered one, so
         // steady playback does not make the interface re-parse and redraw.
-        std::string published_state;
+        // Round-trip times change with the heartbeats while the rest of the
+        // state stays put, so they go in a small message of their own: a new
+        // measurement does not make the interface take the whole state again.
+        std::string published_state,published_latency;
+        auto deliver=[&](const char* name,const splay::Json& value,std::string& published,bool force){
+            auto payload=value.dump(-1,' ',false,splay::Json::error_handler_t::replace);
+            if(!force&&payload==published)return;
+            const char* args[]={"script-message-to","splay",name,payload.c_str(),nullptr};
+            // Remember only a delivered message: the interface may not be loaded yet.
+            if(mpv_command(h,args)>=0)published=std::move(payload);
+            else published.clear();
+        };
         auto publish_state=[&](bool force){
             auto state=session.status();
             state["reconnect"]=reconnect.status(clock_now());
-            auto payload=state.dump(-1,' ',false,splay::Json::error_handler_t::replace);
-            if(!force&&payload==published_state)return;
-            const char* args[]={"script-message-to","splay","splay-state",payload.c_str(),nullptr};
-            // Remember only a delivered state: the interface may not be loaded yet.
-            if(mpv_command(h,args)>=0)published_state=std::move(payload);
-            else published_state.clear();
+            deliver("splay-state",state,published_state,force);
+            deliver("splay-latency",session.latency_status(),published_latency,force);
         };
         auto publish=[&](){publish_state(false);};
         auto publish_credential=[&](const splay::Json& result){

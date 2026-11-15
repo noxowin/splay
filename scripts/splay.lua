@@ -17,6 +17,9 @@ for _,key in ipairs(fields) do
     if not explicit[key] then cfg[key]=defaults[key] end
 end
 local state = {schema=1,connection='disconnected',members={},ready=false}
+-- Round-trip times from the core's splay-latency message, kept apart from the
+-- state: own value under self, other members' reports keyed by username.
+local latency, latency_json = {schema=1,enabled=false,members={}}, nil
 local history = {last={},profiles={},values={}}
 local history_loaded = false
 local pending_saves = {}
@@ -501,7 +504,7 @@ end
 local function member_latency(member)
     if not cfg.latency_enabled then return '' end
     local own=member.username==state.username
-    local value=own and state.latency or member.latency
+    local value=own and latency.self or latency.members[member.username]
     if type(value)=='table' and value.stale~=true and value.reported==true and
         type(value.rtt_ms)=='number' and value.rtt_ms==value.rtt_ms and value.rtt_ms>=0 and value.rtt_ms<=10000 then
         return ' | ▂▄▆█ '..math.floor(value.rtt_ms+0.5)..' ms'
@@ -1271,6 +1274,16 @@ mp.register_script_message('splay-state',function(json)
         end)
     end
 end)
+-- A new measurement refreshes only what shows it: the state is not rebuilt,
+-- re-encoded or sent to the overlay and playlist scripts again.
+mp.register_script_message('splay-latency',function(json)
+    if type(json)~='string' or #json>262144 then return end
+    local value=utils.parse_json(json)
+    if type(value)~='table' or value.schema~=1 or type(value.members)~='table' then return end
+    latency,latency_json=value,json
+    overlay('splay-latency',json)
+    if menu_open and page=='members' then mp.commandv('script-message-to','uosc','update-menu',utils.format_json(menu())) end
+end)
 mp.register_script_message('splay-secret',function(json)
     if type(json)~='string' or #json>16384 then return end
     local value=utils.parse_json(json)
@@ -1386,7 +1399,10 @@ mp.register_script_message('splay-credential',function(json)
     end
     publish()
 end)
-mp.register_script_message('splay-overlay-ready',publish)
+mp.register_script_message('splay-overlay-ready',function()
+    publish()
+    if latency_json then overlay('splay-latency',latency_json) end
+end)
 mp.register_script_message('splay-playlist-ready',publish)
 mp.register_script_message('splay-action',act)
 mp.register_script_message('splay-chat',chat)

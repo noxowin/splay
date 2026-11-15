@@ -39,7 +39,7 @@ Send `script-message-to splay splay-command <JSON>`. The main script applies the
 | `room-policy` | `pause_on_join` / `pause_on_leave` are booleans for pausing when joining and when a member of the same room leaves; on by default, subject to controlled-room permissions |
 | `set-offset` | `seconds` is a finite number within ±86400; local time = room time + offset, and the state returns `time_offset` |
 
-The native core returns a versioned state as `splay-state`, covering connection, room, members, readiness and playlist, and notifies the interface of events through `splay-event`. The direct `splay_core` entry point is for the internal bridge and tests. Automation should use protected local IPC and avoid logging commands that contain a password.
+The native core returns a versioned state as `splay-state`, covering connection, room, members, readiness and playlist, and notifies the interface of events through `splay-event`. Latency is not part of the state. It comes in a separate `splay-latency` message with `enabled`, the local measurement under `self`, and under `members` the values reported by members of the same room, keyed by username; a member that has reported none is absent. The main interface passes it on to the overlay unchanged without resending the state, and the playlist script does not receive it. The direct `splay_core` entry point is for the internal bridge and tests. Automation should use protected local IPC and avoid logging commands that contain a password.
 
 ## Behavior boundaries
 
