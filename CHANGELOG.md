@@ -12,7 +12,8 @@
 - 命令处理之外的异常不再让核心线程退出而留下没有核心的界面：改为断开连接并在状态中报告原因。
 - 历史与凭据文件锁改为在系统队列中等待，上限 5 秒。此前每 10 毫秒重试、上限 1.9 秒，多个进程同时保存时可能有进程一直抢不到锁。
 - 服务器密码摘要改用项目内的 RFC 1321 实现，Windows 与测试使用同一份代码，按 RFC 测试向量和填充边界校验。
-- 开发：五组核心测试可在 Linux 上以 AddressSanitizer / UndefinedBehaviorSanitizer 运行并加入 CI；网络传输测试加入 Windows CI，各组测试互不跳过；打包版本号统一取自 `VERSION`；新增 `.editorconfig`。
+- 开发：五组核心测试可在 Linux 上以 AddressSanitizer / UndefinedBehaviorSanitizer 运行并加入 CI；网络传输测试加入 Windows CI，各组测试互不跳过；打包版本号统一取自 `VERSION`；新增 `.editorconfig`；CI 解析全部 Lua 文件以发现语法错误。
+- 文档：架构说明新增英文版 `docs/architecture.md`，中文版移至 `docs/architecture.zh-CN.md`。
 
 验证范围：维护者本机 Windows 上通过 `history`、`credentials`、`net`、`reconnect` 四组原生检查，本地文件、HTTP、延迟、自动开播、共享列表、官方服务器重连六组官方互通，以及 `tests/ui/smoke.py` 与 `tests/ui/latency_overlay.py`；手动确认了未连接时播放、暂停、跳转后再入房的对齐、无误发房间操作及恢复播放。八组原生检查另在 Windows CI 通过，五组核心测试在 Linux sanitizer 下通过。本轮未重新记录 mpv、uosc 与工具链版本。
 

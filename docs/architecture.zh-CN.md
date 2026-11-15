@@ -1,8 +1,10 @@
 # 架构与接口
 
+[English](architecture.md) · **简体中文**
+
 splay 在现有 mpv 进程中运行：C++17 原生插件处理协议和播放同步，Lua 提供界面，uosc 为可选集成。DLL 通过 `MPV_CPLUGIN_DYNAMIC_SYM` 使用宿主 API，不链接另一份 libmpv。构建方法见 [贡献指南](../CONTRIBUTING.md)。
 
-本文对应 v0.1.0 源码；实际执行的验证和未覆盖范围见 [版本验证记录](validation-v0.1.0.md)。
+本文描述当前主分支；与已发布 v0.1.0 的差异列在 [更新记录](../CHANGELOG.md) 的“未发布”小节。v0.1.0 实际执行的验证和未覆盖范围见 [版本验证记录](validation-v0.1.0.md)。
 
 ## 模块
 

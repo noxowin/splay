@@ -1,6 +1,6 @@
 # 参与 splay 开发
 
-欢迎提交可复现的问题和有明确范围的改进。先阅读 [安装说明](docs/install.md)、[已知限制](docs/validation-v0.1.0.md) 和 [架构](docs/architecture.md)。大改动建议先在 Issue 中说明使用场景、期望行为和验收方式。
+欢迎提交可复现的问题和有明确范围的改进。先阅读 [安装说明](docs/install.md)、[已知限制](docs/validation-v0.1.0.md) 和 [架构](docs/architecture.zh-CN.md)。大改动建议先在 Issue 中说明使用场景、期望行为和验收方式。
 
 ## 提交问题
 
@@ -33,7 +33,9 @@ python tools/verify_release.py --archive dist/splay-windows-x64-v0.1.0.zip --req
 python3 tools/check.py core --sanitize
 ```
 
-GitHub Actions 在 push、pull request 和手动触发时执行上述构建、核心/重连/延迟/自动开播/历史/加密凭据/网络传输测试与产物检查，并另在 Linux 上以 sanitizer 运行五组核心测试。Actions 下载项是开发构建，不自动成为 Release。工作流使用只读仓库权限，不向来自分支的测试注入发布凭据。
+`python tools/check.py lua` 只解析 `scripts/` 与 `tests/` 下的 Lua 文件，用于在播放器加载之前发现语法错误，需要 PATH 中有 LuaJIT 或 luac（也可用 `--lua` 指定）；它不替代真实播放器中的界面检查。
+
+GitHub Actions 在 push、pull request 和手动触发时执行上述构建、核心/重连/延迟/自动开播/历史/加密凭据/网络传输测试与产物检查，并另在 Linux 上以 sanitizer 运行五组核心测试、解析全部 Lua 文件。Actions 下载项是开发构建，不自动成为 Release。工作流使用只读仓库权限，不向来自分支的测试注入发布凭据。
 
 根目录的 `VERSION` 是打包版本号的唯一来源：压缩包名称和随包验证记录的文件名由它得出，校验器会核对 `packaging/INSTALL.txt` 与它一致。发布新版时先改 `VERSION`，再按校验器提示更新其余文件。
 
