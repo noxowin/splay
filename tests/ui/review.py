@@ -22,6 +22,9 @@ local options=require 'mp.options'
 local utils=require 'mp.utils'
 local opt={mode='native',page='home',output=''}
 options.read_options(opt,'review')
+-- The steps are timed from the moment the window can be captured. Counted
+-- from script load, a slow start left the screenshot before the first frame.
+local function begin()
 mp.add_timeout(.4,function()
     assert(mp.get_property_native('user-data/splay').enabled==false)
     if opt.page~='disabled' then mp.commandv('script-message-to','splay','splay-action','toggle-enabled') end
@@ -50,6 +53,11 @@ mp.add_timeout(2.05,function()
     if opt.page~='disabled' then mp.commandv('script-message-to','splay','splay-action','ready') end
 end)
 mp.add_timeout(2.5,function() mp.commandv('quit') end)
+end
+local begun=false
+mp.observe_property('vo-configured','bool',function(_,configured)
+    if configured and not begun then begun=true;begin() end
+end)
 """,encoding='utf-8')
 pages=('disabled','home','connection','endpoint','settings','password-settings','room-actions','members','message-history')
 for mode, page in ((mode,page) for mode in ('native', 'uosc') for page in pages):
