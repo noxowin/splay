@@ -11,7 +11,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'tests/integration'))
-from interop import Job
+from interop import Job, background_window
 
 # Closing the parent also closes this Windows job, including on interruption.
 job = Job()
@@ -47,7 +47,8 @@ class Player:
                    '--script-opts=splay-overlay_chat_ttl=3,splay-overlay_message_ttl=3,overlay-test-keep=untouched',
                    str(ROOT / '.local/test-media.mp4')]
         if mode == 'uosc': command += ['--script=' + str(args.uosc)]
-        self.process = subprocess.Popen(command, cwd=ROOT, stdout=self.log, stderr=subprocess.STDOUT)
+        self.process = subprocess.Popen(command, cwd=ROOT, stdout=self.log, stderr=subprocess.STDOUT,
+                                        startupinfo=background_window())
         job.assign(self.process)
         deadline = time.monotonic() + 12
         while True:

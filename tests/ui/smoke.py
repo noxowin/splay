@@ -12,11 +12,11 @@ parser.add_argument('--uosc',type=Path,default=root/'.local/uosc/scripts/uosc')
 parser.add_argument('--output',type=Path,default=root/'.local/ui-smoke')
 opts=parser.parse_args()
 sys.path.insert(0,str(root/'tests/integration'))
-from interop import Job
+from interop import Job, background_window
 def run_player(command):
     job=Job()
     process=subprocess.Popen(command,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
-                             creationflags=subprocess.CREATE_NO_WINDOW)
+                             creationflags=subprocess.CREATE_NO_WINDOW,startupinfo=background_window(minimized=True))
     job.assign(process)
     try:
         try: output,_=process.communicate(timeout=15)

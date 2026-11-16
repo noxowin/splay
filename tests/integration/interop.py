@@ -53,6 +53,20 @@ class Job:
             self.api.CloseHandle(self.handle)
             self.handle = None
 
+def background_window(minimized=False):
+    """Start-up information for a player that opens a real window.
+
+    The window is shown without being activated, so a test run does not take
+    the keyboard from whoever is using the machine; minimized, it does not
+    cover their windows either. mpv's --focus-on=never alone does not prevent
+    the activation of a new window.
+    """
+    info = subprocess.STARTUPINFO()
+    info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    info.wShowWindow = 7 if minimized else 4  # SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE
+    return info
+
+
 def wait_for(description, predicate, seconds=15):
     until = time.monotonic() + seconds
     last = None
