@@ -28,7 +28,7 @@ import subprocess
 import time
 import uuid
 
-from interop import Job, Player as Observer, ROOT, wait_for
+from interop import Job, Player as Observer, ROOT, background_window, send_behind, wait_for
 
 # Prepended to copies of the production scripts. They only mirror what the
 # scripts already receive into player properties; every message is still
@@ -122,7 +122,7 @@ def main():
         log = (output / (name + '.log')).open('wb')
         logs.append(log)
         process = subprocess.Popen(list(map(str, command)), cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
-                                   creationflags=subprocess.CREATE_NO_WINDOW)
+                                   creationflags=subprocess.CREATE_NO_WINDOW, startupinfo=background_window())
         job.assign(process)
         return process
 
@@ -234,7 +234,9 @@ def main():
 
         def open_box(self):
             self.action('password')
-            return wait_for('password box opens', lambda: (self.boxes() or [None])[0])
+            box = wait_for('password box opens', lambda: (self.boxes() or [None])[0])
+            send_behind(box)
+            return box
 
         def secret(self):
             return self.get('user-data/splay-test-secret') or {'count': 0}

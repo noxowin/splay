@@ -18,7 +18,7 @@ import subprocess
 import time
 import uuid
 
-from interop import Job, ROOT, wait_for
+from interop import Job, ROOT, background_window, send_behind, wait_for
 
 
 def main():
@@ -53,7 +53,8 @@ def main():
         log = (output / (name + '.log')).open('wb')
         logs.append(log)
         process = subprocess.Popen(list(map(str, command)), cwd=ROOT, env=env, stdout=log,
-                                   stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+                                   stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW,
+                                   startupinfo=background_window())
         job.assign(process)
         processes.append(process)
         return process
@@ -219,6 +220,7 @@ end
 
         def fill_native(self,secret=None,key='ENTER'):
             hwnd=wait_for('isolated production Windows password dialog opens',self.native_window)
+            send_behind(hwnd)
             edit=user.GetDlgItem(hwnd,1001)
             assert user.GetWindowLongPtrW(edit,-16)&0x20,'Native password must use ES_PASSWORD'
             wait_for('native password input never opens console',lambda:self.get('user-data/mpv/console/open') is not True)

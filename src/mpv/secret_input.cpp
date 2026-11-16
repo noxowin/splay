@@ -95,9 +95,21 @@ struct SecretInput::Impl {
         window = nullptr; edit = nullptr;
         DestroyWindow(closing);
         if (font) { DeleteObject(font); font = nullptr; }
-        if (owner && IsWindow(owner)) SetForegroundWindow(owner);
+        if (!background && owner && IsWindow(owner)) SetForegroundWindow(owner);
         result(std::move(value));
     }
+    // A launcher that starts the player with a no-activate show command has
+    // asked for its windows to stay out of the foreground. The box then opens
+    // without taking it and waits to be clicked; the test harnesses rely on
+    // this. "Run minimized" shortcuts use a different command and are not
+    // affected.
+    static bool background_start() {
+        STARTUPINFOW info{}; info.cb = sizeof(info);
+        GetStartupInfoW(&info);
+        return (info.dwFlags & STARTF_USESHOWWINDOW) &&
+               (info.wShowWindow == SW_SHOWNOACTIVATE || info.wShowWindow == SW_SHOWNA);
+    }
+    const bool background = background_start();
     static LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
         auto self = reinterpret_cast<Impl*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
@@ -167,8 +179,10 @@ struct SecretInput::Impl {
             result({request.id, false, {}, "Could not create the Windows password controls"});
             return;
         }
-        ShowWindow(window, SW_SHOW);
-        SetForegroundWindow(window); SetFocus(edit);
+        // SetFocus also activates the window, so it is left out as well; the
+        // box moves the focus to its edit control once it is activated.
+        if (background) ShowWindow(window, SW_SHOWNOACTIVATE);
+        else { ShowWindow(window, SW_SHOW); SetForegroundWindow(window); SetFocus(edit); }
     }
     void run() {
         WNDCLASSW wc{};

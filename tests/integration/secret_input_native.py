@@ -10,6 +10,8 @@ import subprocess
 import threading
 import time
 
+from interop import background_window, send_behind
+
 ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
 parser.add_argument('--compiler', default=os.environ.get('CXX') or shutil.which('g++') or r'C:\Program Files\mingw64\bin\g++.exe')
@@ -75,7 +77,8 @@ user.PostMessageW.argtypes = [w.HWND, w.UINT, w.WPARAM, w.LPARAM]
 user.SetWindowTextW.argtypes = [w.HWND, w.LPCWSTR]
 user.IsWindow.argtypes = [w.HWND]
 proc = subprocess.Popen([str(exe)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                        text=True, encoding='utf-8', creationflags=subprocess.CREATE_NO_WINDOW)
+                        text=True, encoding='utf-8', creationflags=subprocess.CREATE_NO_WINDOW,
+                        startupinfo=background_window())
 output = queue.Queue()
 logs = []
 def consume():
@@ -121,7 +124,9 @@ def window(number):
         user.EnumWindows(visit, 0)
         if found:
             edit=user.GetDlgItem(found[0],1001)
-            if edit: return found[0],edit
+            if edit:
+                send_behind(found[0])
+                return found[0],edit
         time.sleep(.02)
     raise AssertionError('Isolated password window did not appear: '+str(number))
 
