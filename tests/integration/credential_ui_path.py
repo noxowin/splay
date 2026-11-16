@@ -153,9 +153,16 @@ end
         def action(self, name):
             self.cmd('script-message-to', 'splay', 'splay-action', name)
 
+        def console_ready(self):
+            # The form is requested before the console has taken over the
+            # keys; a key sent in between goes to the player and is lost.
+            wait_for('console is open for keys', lambda: self.get('user-data/mpv/console/open') is True)
+            time.sleep(.4)
+
         def submit(self, value):
             # Use real console keys. New mpv assigns input-event/N handlers;
             # depending on a private callback name would skip the real form.
+            self.console_ready()
             if isinstance(value, int):
                 assert value == 1
             else:
@@ -173,6 +180,7 @@ end
                  and any(needle in item for item in state.get('items', [])) else None)
                 (self.get('user-data/splay-test-input') or {}))
             index = next(i for i, item in enumerate(status['items']) if needle in item)
+            self.console_ready()
             for _ in status['items']:
                 self.cmd('keypress', 'UP')
             for _ in range(index):
