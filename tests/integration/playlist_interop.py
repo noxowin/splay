@@ -12,7 +12,7 @@ import subprocess
 import time
 import uuid
 
-from interop import Job, Player as ObserverPlayer, ROOT, wait_for
+from interop import Job, start_official, Player as ObserverPlayer, ROOT, wait_for
 
 
 class Player(ObserverPlayer):
@@ -130,11 +130,11 @@ def main():
         wait_for('unmodified official server listens locally', listening)
         official, plugin = Player(directory, 'official'), Player(directory, 'plugin')
         room = 'playlist-' + uuid.uuid4().hex[:8]
-        cli = launch('official', [args.python, args.upstream / 'syncplayClient.py', '--no-gui', '--no-store',
+        cli = start_official(lambda: launch('official', [args.python, args.upstream / 'syncplayClient.py', '--no-gui', '--no-store',
                                  '--host', '127.0.0.1:' + str(port), '--name', 'official', '--room', room,
                                  '--player-path', args.mpv, args.media, '--', '--vo=null', '--ao=null',
-                                 '--pause=yes', '--no-config', '--scripts-append=' + str(official.script)], stdin=True)
-        wait_for('official client owns a loaded real mpv', lambda: official.read().get('duration', 0) > 100)
+                                 '--pause=yes', '--no-config', '--scripts-append=' + str(official.script)], stdin=True),
+                             official, directory / 'official.log', 'official client owns a loaded real mpv')
         cli_command('queue official-中文-A.mkv')
         cli_command('queue official-😀-B.mkv')
         def seeded_snapshot():

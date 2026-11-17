@@ -67,6 +67,40 @@ def background_window(minimized=False):
     return info
 
 
+def start_official(start, official, log, description='official client owns a loaded real mpv', attempts=3):
+    """Start the official client and wait until its own mpv has the media loaded.
+
+    The official client gives its mpv 10 s to open the IPC pipe, and on the
+    reference machine a normal start takes 2 to 11 s. When that runs out it
+    logs "MPV start timed out", reconnects and recovers some 20 s later, but in
+    a room state that differs from a clean start. Begin again instead: stop
+    that client together with its mpv and launch a fresh one. start() launches
+    the client and returns its process; it may be called more than once.
+    """
+    for attempt in range(1, attempts + 1):
+        process = start()
+        until = time.monotonic() + 30
+        while time.monotonic() < until:
+            try:
+                if official.read().get('duration', 0) > 100:
+                    print('PASS:', description, '' if attempt == 1 else '(attempt %d)' % attempt, flush=True)
+                    return process
+            except (FileNotFoundError, json.JSONDecodeError, PermissionError):
+                pass
+            try:
+                failed = 'MPV start timed out' in Path(log).read_text(encoding='utf-8', errors='replace')
+            except FileNotFoundError:
+                failed = False
+            if failed or process.poll() is not None:
+                break
+            time.sleep(.2)
+        print('official client restarted: its mpv did not start (attempt %d)' % attempt, flush=True)
+        subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True)
+        process.wait(timeout=10)
+        official.snapshot.unlink(missing_ok=True)
+    raise AssertionError('Timed out: %s after %d attempts' % (description, attempts))
+
+
 def wait_for(description, predicate, seconds=15):
     until = time.monotonic() + seconds
     last = None
@@ -120,7 +154,9 @@ mp.add_periodic_timer(0.1, function()
     local result = {position=mp.get_property_native('time-pos'),
         paused=mp.get_property_native('pause'), path=mp.get_property('path'),
         media_title=mp.get_property('media-title'),
-        duration=mp.get_property_native('duration'), state=state, latency_json=latency, event_json=events, errors=errors}
+        duration=mp.get_property_native('duration'), speed=mp.get_property_native('speed'),
+        watch_later_options=mp.get_property('watch-later-options'),
+        state=state, latency_json=latency, event_json=events, errors=errors}
     local out = io.open(destination .. '.tmp', 'w')
     if out then
         out:write(utils.format_json(result)); out:close()
@@ -156,7 +192,16 @@ class Player:
         self.sequence += 1
         temp = self.controls.with_suffix('.tmp')
         temp.write_text(json.dumps({'sequence': self.sequence, 'command': list(command)}), encoding='utf-8')
-        os.replace(temp, self.controls)
+        # The observer polls this file every 100 ms; Windows refuses the
+        # replace while it has the file open, so try again shortly.
+        for attempt in range(25):
+            try:
+                os.replace(temp, self.controls)
+                return
+            except PermissionError:
+                if attempt == 24:
+                    raise
+                time.sleep(.01)
     def splay(self, action, **values):
         self.command('script-message-to', 'splay_core', 'splay-command', json.dumps(dict(action=action, **values)))
 
@@ -240,13 +285,12 @@ def main():
             plugin_media = f'http://127.0.0.1:{http_port}/fixture.mp4?test_token=plugin-fixture-only'
             time.sleep(.5)
         room = 'integration-' + uuid.uuid4().hex[:8]
-        cli = launch('official', [args.python, args.upstream / 'syncplayClient.py', '--no-gui', '--no-store',
+        cli = start_official(lambda: launch('official', [args.python, args.upstream / 'syncplayClient.py', '--no-gui', '--no-store',
                                   '--host', f'127.0.0.1:{port}', '--password', 'fixture-server-password', '--name', 'official', '--room', room,
                                   '--player-path', args.mpv, official_media, '--', '--vo=null', '--ao=null',
                                   '--pause=yes', '--no-config', '--scripts-append=' + str(official.script),
-                                  '--log-file=' + str(directory / 'official-mpv.log')], stdin=True)
-        wait_for('official mpv observer loads', lambda: official.read())
-        wait_for('official client owns a loaded real mpv', lambda: official.read().get('duration', 0) > 100)
+                                  '--log-file=' + str(directory / 'official-mpv.log')], stdin=True),
+                             official, directory / 'official.log', 'official client owns a loaded real mpv')
         time.sleep(3)
         # The official client may unpause asynchronously after opening an HTTP
         # playlist. Establish the test's baseline after startup has completed.

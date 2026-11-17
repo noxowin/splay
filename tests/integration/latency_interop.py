@@ -14,7 +14,7 @@ import subprocess
 import time
 import uuid
 
-from interop import Job, Player as ObserverPlayer, ROOT, wait_for
+from interop import Job, start_official, Player as ObserverPlayer, ROOT, wait_for
 
 
 class Player(ObserverPlayer):
@@ -108,11 +108,11 @@ def main():
                 return probe.connect_ex(('127.0.0.1', port)) == 0
 
         wait_for('unmodified official server listens', listening)
-        cli = launch('official', [args.python, args.upstream / 'syncplayClient.py', '--no-gui', '--no-store',
+        cli = start_official(lambda: launch('official', [args.python, args.upstream / 'syncplayClient.py', '--no-gui', '--no-store',
             '--language', 'en', '--host', '127.0.0.1:' + str(port), '--name', 'official', '--room', room,
             '--player-path', args.mpv, args.media, '--', '--vo=null', '--ao=null', '--pause=yes',
-            '--no-config', '--scripts-append=' + str(official.script)], stdin=True)
-        wait_for('official client owns actual loaded mpv', lambda: official.read().get('duration', 0) > 100)
+            '--no-config', '--scripts-append=' + str(official.script)], stdin=True),
+                             official, output / 'official.log', 'official client owns actual loaded mpv')
         for name, player in [('plugin', plugin), ('peer', peer)]:
             launch(name, [args.mpv, '--no-config', '--vo=null', '--ao=null', '--pause=yes', '--idle=yes',
                           '--script=' + str(args.plugin), '--script=' + str(player.script), args.media])
