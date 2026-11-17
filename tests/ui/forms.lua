@@ -80,6 +80,31 @@ local function secret_reply(request,token,saved,cancelled,error)
     handlers['splay-secret'](utils.format_json({request_id=request.request_id,purpose=request.purpose,
         token=token,saved=saved==true,cancelled=cancelled==true,error=error}))
 end
+-- Type into the open password prompt the way mpv delivers it: submit, then
+-- closed. Returns the one command that carries the password to the core.
+local function secret_submit(value)
+    local request=prompted
+    assert(request and request.id:find('splay-secret-',1,true),'a password prompt is open')
+    local before=count('secret-submit')
+    if active_request==request then active_request=nil end
+    request.submit(value);if request.closed then request.closed() end
+    assert(count('secret-submit')==before+1,'one command per submitted password')
+    return last('secret-submit')
+end
+-- Typed passwords contain TYPED_PW. They may reach the core only in
+-- secret-submit; nothing the script displays, publishes or saves holds them.
+local function assert_private()
+    for _,item in ipairs(commands) do
+        local value=item[2]=='splay_core' and utils.parse_json(item[4]) or nil
+        if not (value and value.action=='secret-submit') then
+            for _,arg in ipairs(item) do assert(not tostring(arg):find('TYPED_PW',1,true),'password published in '..tostring(item[3])) end
+        end
+    end
+    for name,value in pairs(properties) do
+        assert(not utils.format_json(value):find('TYPED_PW',1,true),'password left in property '..name)
+    end
+    for _,text in ipairs(notices) do assert(not text:find('TYPED_PW',1,true),'password shown in a notice') end
+end
 local function act(action) handlers['splay-action'](action) end
 local function finish(value,kind)
     local request=kind=='select' and selected or prompted
@@ -161,9 +186,14 @@ state({chat_supported=false});assert(not bindings['splay-chat-enter'])
 local previous=prompted;handlers['splay-chat']();assert(prompted==previous)
 state({chat_supported=true})
 local previous_prompt=prompted
-act('password');local native_password=last('secret-input')
-assert(prompted==previous_prompt and native_password.purpose=='server' and native_password.host=='history.example')
-assert(native_password.remember_password==true and native_password.password==nil and not bindings['splay-chat-enter'])
+act('password');local password_prompt=prompted
+assert(password_prompt~=previous_prompt and password_prompt.default_text=='' and password_prompt.history_path==nil)
+assert(password_prompt.prompt=='服务器 history.example:9001 的密码（输入时可见）: ','the prompt warns that the password is visible')
+assert(notices[#notices]:find('明文显示',1,true) and not bindings['splay-chat-enter'] and count('secret-submit')==0)
+act('connection');assert(label('输入中'),'the form shows a password being entered');dismiss()
+act('password');local native_password=secret_submit('TYPED_PW_server_1')
+assert(native_password.purpose=='server' and native_password.host=='history.example' and native_password.port==9001)
+assert(native_password.remember_password==true and native_password.password=='TYPED_PW_server_1' and not bindings['splay-chat-enter'])
 secret_reply(native_password,'opaque-server-1',true)
 act('connection');assert(label('已加密保存'));dismiss()
 act('connect');assert(last('connect').password==nil and last('connect').password_token=='opaque-server-1')
@@ -181,11 +211,12 @@ handlers['splay-credential'](utils.format_json({schema=1,host='other.example',po
 act('clear-password');assert(last('credential-delete').host=='other.example')
 credential_reply(last('credential-delete'),false)
 act('connection');assert(label('密码: 空'));dismiss()
-act('toggle-remember-password');act('password')
-secret_reply(last('secret-input'),'opaque-memory-only',false)
+act('toggle-remember-password');act('password');local memory_password=secret_submit('TYPED_PW_memory')
+assert(memory_password.remember_password==false)
+secret_reply(memory_password,'opaque-memory-only',false)
 act('connect');assert(last('connect').password_token=='opaque-memory-only' and last('connect').remember_password==false)
 act('connect');assert(last('connect').reuse_password==true and last('connect').password_token==nil,'opt-out reuses only the native endpoint-bound hash')
-act('toggle-remember-password');assert(count('credential-save')==0,'saving requires re-entry in the Windows dialog')
+act('toggle-remember-password');assert(count('credential-save')==0,'saving requires typing the password again')
 act('profiles');finish(2,'select');finish(3,'select');credential_reply(last('credential-status'),true);act('connect');assert(last('connect').password==nil)
 act('room');finish(1,'select');finish('new-room');dismiss();assert(count('room')==0)
 act('join-room');assert(last('room').room=='new-room')
@@ -246,6 +277,7 @@ for _,item in ipairs(commands) do
         if value.action=='history-save' then assert(not item[4]:find('SECRET',1,true) and not item[4]:find('MEMORY_ONLY',1,true)) end
     end
 end
+assert_private()
 commands={};handlers['splay-overlay-ready']();assert(commands[1][3]=='splay-state' and commands[2][2]=='splay_playlist' and commands[3][3]=='splay-menu-model')
 assert(utils.parse_json(commands[2][4]).local_file=='fixture.mp4')
 commands={};handlers['splay-playlist-ready']();assert(commands[2][2]=='splay_playlist')
@@ -269,20 +301,29 @@ local first_status=last('credential-status')
 handlers['splay-credential'](utils.format_json({schema=1,host='race.example',port=8999,saved=true}))
 assert(count('connect')==0,'uncorrelated legacy response cannot release a pending connect')
 credential_reply(first_status,true);assert(last('connect').use_saved_password==true)
-act('password');local saving=last('secret-input')
-pending_connects=count('connect');act('connect');assert(count('connect')==pending_connects)
+act('password')
+pending_connects=count('connect');act('connect');assert(count('connect')==pending_connects,'connect waits for the open password prompt')
 credential_reply(first_status,false);assert(count('connect')==pending_connects,'old same-endpoint status cannot overwrite pending save')
+local saving=secret_submit('TYPED_PW_race');assert(count('connect')==pending_connects,'connect waits for the core to take the password')
 secret_reply(saving,'opaque-race',true)
 assert(count('connect')==pending_connects+1 and last('connect').password_token=='opaque-race' and last('connect').password==nil)
 act('clear-password');local deleting=last('credential-delete');pending_connects=count('connect');act('connect')
 secret_reply(saving,'old-token',true);assert(count('connect')==pending_connects,'old native input cannot resurrect a deleted credential')
 credential_reply(deleting,false);assert(last('connect').password==nil and last('connect').use_saved_password==false)
 act('password');pending_connects=count('connect');act('connect')
-secret_reply(last('secret-input'),nil,false,false,'fixture save failure');act('connect')
+secret_reply(secret_submit('TYPED_PW_save_failure'),nil,false,false,'fixture save failure');act('connect')
 assert(count('connect')==pending_connects,'save failure must never fall back to an empty-password connection')
 assert(notices[#notices]:find('fixture save failure',1,true))
-act('toggle-remember-password');act('password');secret_reply(last('secret-input'),'retry-memory',false)
+act('toggle-remember-password');act('password');secret_reply(secret_submit('TYPED_PW_retry'),'retry-memory',false)
 act('connect');assert(last('connect').remember_password==false and last('connect').password_token=='retry-memory')
+-- Closing the prompt without submitting is a cancel: nothing reaches the
+-- core, a connect that waited for it does not run, and Enter is free again.
+state({connection='disconnected'});act('password');pending_connects=count('connect');act('connect')
+local submits=count('secret-submit');dismiss()
+assert(count('secret-submit')==submits and count('connect')==pending_connects and not active_request)
+act('connection');assert(not label('输入中'));dismiss()
+act('connect');assert(count('connect')==pending_connects+1 and last('connect').password_token==nil,'a cancelled prompt leaves no pending password')
+assert_private()
 start({host='race.example',port=8999,username='race',room='room',tls='off',history_enabled=false})
 credential_init(true);act('toggle-enabled');act('toggle-remember-password');act('connection')
 assert(label('当前不使用'));dismiss();act('connect');assert(last('connect').use_saved_password==false and last('connect').password==nil)
@@ -326,15 +367,15 @@ act('room');finish(1,'select');finish('');act('save-profile')
 assert(count('history-save')==save_before+1 and notices[#notices]:find('请先输入或选择房间',1,true))
 act('room');finish(1,'select') -- choose the manual room entry from suggestions.
 finish('新房间')
-act('password');local saving_profile_secret=last('secret-input');save_before=count('history-save')
-act('save-profile');assert(count('history-save')==save_before and notices[#notices]:find('Windows 密码输入',1,true))
+act('password');local saving_profile_secret=secret_submit('TYPED_PW_profile_failure');save_before=count('history-save')
+act('save-profile');assert(count('history-save')==save_before and notices[#notices]:find('请先完成或取消密码输入',1,true))
 secret_reply(saving_profile_secret,nil,false,false,'fixture credential failure')
 act('save-profile');assert(count('history-save')==save_before and notices[#notices]:find('密码存储错误',1,true))
 act('toggle-remember-password');act('save-profile')
 assert(count('history-save')==save_before+1,'password opt-out must allow saving non-secret settings despite a credential failure')
 history_reply(history,last('history-save'));assert(notices[#notices]:find('密码不随组合保存',1,true))
 act('toggle-remember-password')
-act('password');secret_reply(last('secret-input'),'opaque-profile-secret',true)
+act('password');secret_reply(secret_submit('TYPED_PW_profile'),'opaque-profile-secret',true)
 act('save-profile');local saved_profile=last('history-save')
 assert(saved_profile.remember_profile and saved_profile.settings.room=='新房间' and saved_profile.settings.password==nil and saved_profile.password_token==nil)
 assert(notices[#notices]:find('正在保存连接组合',1,true))
@@ -390,20 +431,37 @@ stale_clear.submit(2);assert(count('history-clear')==clears)
 act('username');local stale_name=prompted
 act('toggle-enabled');act('toggle-enabled');local saves=count('history-save')
 stale_name.submit('stale-edit');assert(count('history-save')==saves)
--- Native secret results are correlated to purpose, endpoint and UI lifetime.
-state();act('password');local old_secret=last('secret-input')
-act('password');local new_secret=last('secret-input')
-assert(new_secret.request_id>old_secret.request_id and last('secret-cancel').request_id==old_secret.request_id)
-secret_reply(old_secret,'obsolete-token',true);assert(not bindings['splay-chat-enter'])
+-- Password prompts and replies are correlated to purpose, endpoint and UI lifetime.
+state();act('password');local old_prompt=prompted;local closes=terminated
+act('password');local new_prompt=prompted
+assert(new_prompt~=old_prompt and terminated==closes+1,'asking again closes the earlier prompt')
+assert(new_prompt.id~=old_prompt.id,'each password prompt has an input history of its own')
+submits=count('secret-submit');old_prompt.submit('TYPED_PW_replaced');assert(count('secret-submit')==submits,'a replaced prompt cannot submit')
+local old_secret=secret_submit('TYPED_PW_current')
+act('password');local new_secret=secret_submit('TYPED_PW_newer')
+assert(new_secret.request_id>old_secret.request_id)
+secret_reply(old_secret,'obsolete-token',true);assert(not bindings['splay-chat-enter'],'a stale reply is ignored')
 secret_reply(new_secret,nil,false,true);assert(bindings['splay-chat-enter'])
 local get_before=prompted
-act('authenticate');assert(prompted==get_before and last('secret-input').purpose=='operator')
-secret_reply(last('secret-input'),nil,false,true)
-act('create-room');finish('new-controlled-room');assert(last('secret-input').purpose=='create_room' and last('secret-input').room=='new-controlled-room')
-secret_reply(last('secret-input'),nil,false,false,'Use operator password AA-123-456')
+act('authenticate');assert(prompted~=get_before and prompted.prompt=='操作员密码，例如 AB-123-456（输入时可见）: ')
+local operator=secret_submit('TYPED_PW_operator')
+assert(operator.purpose=='operator' and operator.room=='active-room' and operator.password=='TYPED_PW_operator')
+secret_reply(operator,nil,false,true)
+act('authenticate');state({room='moved-room'});submits=count('secret-submit')
+prompted.submit('TYPED_PW_moved');assert(count('secret-submit')==submits,'an operator password typed for another room is dropped')
+prompted.closed();state()
+act('create-room');finish('new-controlled-room')
+assert(prompted.prompt:find('new-controlled-room',1,true) and prompted.prompt:find('输入时可见',1,true))
+local creating=secret_submit('TYPED_PW_create')
+assert(creating.purpose=='create_room' and creating.room=='new-controlled-room')
+secret_reply(creating,nil,false,false,'Use operator password AA-123-456')
+assert(notices[#notices]:find('Use operator password AA-123-456',1,true))
 assert(count('authenticate')==0 and count('create-room')==0 and count('credential-save')==0,'all interactive secret consumption stays in native code')
-act('password');old_secret=last('secret-input');act('toggle-enabled');act('toggle-enabled')
+act('password');local closed_prompt=prompted;act('toggle-enabled');act('toggle-enabled')
+submits=count('secret-submit');closed_prompt.submit('TYPED_PW_disabled');assert(count('secret-submit')==submits)
+act('password');old_secret=secret_submit('TYPED_PW_closing');act('toggle-enabled');act('toggle-enabled')
 secret_reply(old_secret,'closed-token',true);act('connect');assert(last('connect').password_token~='closed-token')
+assert_private()
 state({connection='error',error='retry failure',reconnect={enabled=true,pending=true,attempt=2,remaining=4}})
 act('connection');assert(label('4 秒 · 第 2/5 次') and label('取消重连'));dismiss()
 act('toggle-auto-reconnect');assert(last('reconnect-disable'))
@@ -591,7 +649,7 @@ act('join-form');assert(selected.prompt:find('加入房间',1,true) and label('�
 act('create-form');assert(prompted.prompt:find('新普通房间名称',1,true) and prompted.default_text=='' and count('connect')==0)
 finish('fresh-room')
 assert(selected.prompt:find('创建房间',1,true) and label('创建并进入') and label('房间: fresh-room') and count('connect')==0)
-act('connect');assert(last('connect').room=='fresh-room' and count('create-room')==0 and count('secret-input')==0)
+act('connect');assert(last('connect').room=='fresh-room' and count('create-room')==0 and count('secret-submit')==0)
 act('create-form');dismiss()
 local explicit_connects=count('connect')
 act('connect');assert(count('connect')==explicit_connects and prompted.default_text=='','cancelled creation cannot reuse an old room silently')
@@ -765,11 +823,11 @@ assert(label('Room members: 2') and label('Local time offset: +5 s') and label('
 act('time-offset');assert(label('Enter offset in seconds…') and label('+1 s (this player 1 s ahead)') and label('Reset to zero') and
     label('Local time = room time + offset.'));dismiss()
 act('members');assert(label('self | active-room | Ready | Operator') and label('peer | active-room | Not ready'));dismiss()
-act('authenticate');local english_secret=last('secret-input')
-assert(english_secret.title=='splay operator authentication' and english_secret.prompt=='Enter the operator password (e.g. AB-123-456)')
-assert(english_secret.ok=='OK' and english_secret.cancel=='Cancel' and english_secret.note:find('not written to mpv input history',1,true))
-assert(notices[#notices]=='Enter it in the Windows password dialog; it is not written to mpv input history')
-secret_reply(english_secret,nil,false,true)
+act('authenticate');assert(prompted.prompt=='Operator password, e.g. AB-123-456 (visible while typing): ')
+assert(notices[#notices]=='The password is shown in clear text in the mpv input box; Enter submits, Esc cancels')
+local english_secret=secret_submit('TYPED_PW_english')
+secret_reply(english_secret,nil,false,false,'fixture english failure')
+assert(notices[#notices]=='Password entry: fixture english failure')
 state({username='self',time_offset=5,warning='Waiting for media; synchronization is suspended',members={}})
 handlers['splay-open']('uosc')
 local function uosc_menu(name)
@@ -820,5 +878,5 @@ local saved_language=utils.parse_json(utils.format_json(history));saved_language
 history_reply(saved_language)
 assert(model().items[5].title=='Settings' and display_state().settings.language=='en','saved language preference is restored')
 
-print('UI_FORMS_PASSED default off, Settings and room actions, endpoint editing, encrypted credential commands and stale reply isolation, playlist handoff, 300-event transparent persistent history, stable nickname colours and white body, continuous chat and Esc/stale-room guards, conditional shortcuts, modal generations, saved-profile navigation, preference restore/touch/save, strict durations, editable local offsets and stale candidates, media privacy and lifecycle, overlay replay, English labels, runtime language switch, auto system language and fallback')
+print('UI_FORMS_PASSED default off, Settings and room actions, endpoint editing, encrypted credential commands, password prompts with submit/cancel/stale reply isolation, playlist handoff, 300-event transparent persistent history, stable nickname colours and white body, continuous chat and Esc/stale-room guards, conditional shortcuts, modal generations, saved-profile navigation, preference restore/touch/save, strict durations, editable local offsets and stale candidates, media privacy and lifecycle, overlay replay, English labels, runtime language switch, auto system language and fallback')
 real_mp.commandv('quit')

@@ -5,8 +5,6 @@ this harness's Windows job are closed. Requires access to the Windows user's
 DPAPI keys; run outside the restricted-account sandbox.
 """
 import argparse
-import ctypes
-from ctypes import wintypes
 import hashlib
 import json
 import msvcrt
@@ -18,7 +16,7 @@ import subprocess
 import time
 import uuid
 
-from interop import Job, ROOT, background_window, send_behind, wait_for
+from interop import Job, ROOT, background_window, wait_for
 
 
 def main():
@@ -35,19 +33,6 @@ def main():
     password_a, password_b = ('UI_DPAPI_A_' + uuid.uuid4().hex, 'UI_DPAPI_B_' + uuid.uuid4().hex)
     room = 'credential-' + uuid.uuid4().hex[:8]
     credential_file, history_file = config / 'splay-credentials.json', config / 'splay-history.json'
-    user = ctypes.WinDLL('user32', use_last_error=True)
-    enum_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    user.EnumWindows.argtypes=[enum_type,wintypes.LPARAM]
-    user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
-    user.GetClassNameW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int]
-    user.GetDlgItem.argtypes=[wintypes.HWND,ctypes.c_int]
-    user.GetDlgItem.restype=wintypes.HWND
-    user.GetWindowLongPtrW.argtypes=[wintypes.HWND,ctypes.c_int]
-    user.GetWindowLongPtrW.restype=ctypes.c_ssize_t
-    user.SendMessageW.argtypes=[wintypes.HWND,wintypes.UINT,wintypes.WPARAM,wintypes.LPARAM]
-    user.SendMessageW.restype=ctypes.c_ssize_t
-    user.PostMessageW.argtypes=[wintypes.HWND,wintypes.UINT,wintypes.WPARAM,wintypes.LPARAM]
-    user.IsWindow.argtypes=[wintypes.HWND]
 
     def launch(name, command):
         log = (output / (name + '.log')).open('wb')
@@ -98,7 +83,7 @@ for _,kind in ipairs({'get','select'}) do
         mp.set_property_native('user-data/splay-test-input',status)
         local submit,closed=request.submit,request.closed
         request.submit=function(value)
-            status.submitted=true;status.value=value
+            status.submitted=true
             mp.set_property_native('user-data/splay-test-input',status)
             if submit then submit(value) end
         end
@@ -191,7 +176,7 @@ end
 
         def field(self, name, value):
             if name=='password':
-                self.native('password',value)
+                self.password('password',value)
                 return
             self.action(name)
             wait_for('production ' + name + ' form opens', lambda: self.get('user-data/mpv/console/open') is True)
@@ -204,36 +189,32 @@ end
             assert status.get('submitted') or status.get('items'),status
             self.cmd('keypress', 'ESC')
 
-        def native_window(self):
-            found=[]
-            @enum_type
-            def visit(hwnd,_):
-                pid=wintypes.DWORD()
-                user.GetWindowThreadProcessId(hwnd,ctypes.byref(pid))
-                if pid.value==self.process.pid:
-                    kind=ctypes.create_unicode_buffer(100)
-                    user.GetClassNameW(hwnd,kind,len(kind))
-                    if kind.value=='splay.SecretInput' and user.GetDlgItem(hwnd,1001): found.append(hwnd)
-                return True
-            user.EnumWindows(visit,0)
-            return found[0] if found else None
+        def password_prompt(self):
+            status=self.get('user-data/splay-test-input') or {}
+            return status if status.get('kind')=='get' and not status.get('closed') and \
+                '输入时可见' in (status.get('prompt') or '') else None
 
-        def fill_native(self,secret=None,key='ENTER'):
-            hwnd=wait_for('isolated production Windows password dialog opens',self.native_window)
-            send_behind(hwnd)
-            edit=user.GetDlgItem(hwnd,1001)
-            assert user.GetWindowLongPtrW(edit,-16)&0x20,'Native password must use ES_PASSWORD'
-            wait_for('native password input never opens console',lambda:self.get('user-data/mpv/console/open') is not True)
+        def fill_password(self,secret=None,key='ENTER'):
+            # Real console keys into the production password prompt.
+            wait_for('production password prompt opens in the mpv console',self.password_prompt)
+            self.console_ready()
             if secret is not None:
-                buffer=ctypes.create_unicode_buffer(secret)
-                assert user.SendMessageW(edit,0xC,0,ctypes.cast(buffer,ctypes.c_void_p).value)
-            if key=='CLOSE': user.PostMessageW(hwnd,0x10,0,0)
-            else: user.PostMessageW(edit,0x100,0x1B if key=='ESC' else 0x0D,0)
-            wait_for('production Windows password dialog closes',lambda:not user.IsWindow(hwnd))
+                for character in secret:
+                    self.cmd('keypress', character)
+            if key=='CLOSE':
+                # Opening the panel replaces the prompt: closed, never submitted.
+                self.action('connection')
+                wait_for('the panel replaces the password prompt',lambda:
+                         (self.get('user-data/splay-test-input') or {}).get('kind')=='select')
+                self.console_ready()
+                self.cmd('keypress','ESC')
+            else:
+                self.cmd('keypress', key)
+            wait_for('production password prompt closes',lambda:not self.password_prompt())
 
-        def native(self,action,secret=None,key='ENTER'):
+        def password(self,action,secret=None,key='ENTER'):
             self.action(action)
-            self.fill_native(secret,key)
+            self.fill_password(secret,key)
 
         def close(self):
             if self.process.poll() is None:
@@ -341,14 +322,14 @@ end
         connected(second, 'fresh process connects without retyping password through init/status readiness')
         disconnected(second)
         prior=credential_file.read_bytes()
-        second.native('password','SYNTHETIC_CANCEL_NOT_SAVED',key='ESC')
+        second.password('password','SYNTHETIC_CANCEL_NOT_SAVED',key='ESC')
         time.sleep(.25)
         assert credential_file.read_bytes()==prior,'Escape must leave encrypted credential unchanged'
-        second.native('password','SYNTHETIC_CLOSE_NOT_SAVED',key='CLOSE')
+        second.password('password','SYNTHETIC_CLOSE_NOT_SAVED',key='CLOSE')
         time.sleep(.25)
-        assert credential_file.read_bytes()==prior,'Window close must leave encrypted credential unchanged'
+        assert credential_file.read_bytes()==prior,'Closing the prompt unsubmitted must leave encrypted credential unchanged'
         second.action('connect')
-        connected(second,'Escape and window close retain the previously saved password')
+        connected(second,'Escape and closing the prompt retain the previously saved password')
         disconnected(second)
         second.field('room', room + '-other')
         second.action('connect')
@@ -401,36 +382,36 @@ end
         third.action('toggle-remember-password')
         third.field('password',password_a)
         third.action('connect')
-        connected(third,'native temporary password authenticates without restoring deleted credential')
+        connected(third,'temporary typed password authenticates without restoring deleted credential')
         assert [entry['port'] for entry in entries()]==[port_b]
         disconnected(third);third.action('connect')
-        connected(third,'temporary native password is reused only from the current endpoint hash')
-        third.native('authenticate',None,key='ESC')
+        connected(third,'temporary typed password is reused only from the current endpoint hash')
+        third.password('authenticate',None,key='ESC')
         assert third.state()['connection']=='connected'
-        controlled='native-'+uuid.uuid4().hex[:6]
+        controlled='prompt-'+uuid.uuid4().hex[:6]
         third.action('create-room')
         wait_for('controlled-room name uses non-secret console form',lambda:third.get('user-data/mpv/console/open') is True)
         third.submit(controlled)
-        third.fill_native('bad-synthetic-operator')
+        third.fill_password('bad-synthetic-operator')
         time.sleep(.2)
         assert third.state()['connection']=='connected','Validation failure must preserve the connection'
         third.action('create-room')
         wait_for('controlled-room form can reopen after validation error',lambda:third.get('user-data/mpv/console/open') is True)
         third.submit(controlled)
         operator_password='SY-314-159'
-        third.fill_native(operator_password)
-        wait_for('native operator password creates a controlled room',lambda:controlled in third.state().get('room','') and third.state().get('room','').startswith('+'))
-        wait_for('controlled room creation authenticates the native operator',lambda:third.full_state().get('is_controller') is True)
-        third.native('authenticate',operator_password)
-        wait_for('native operator authentication succeeds',lambda:third.full_state().get('is_controller') is True)
-        third.native('authenticate','ZZ-000-000')
-        wait_for('wrong native operator password reports server authentication error',lambda:third.full_state().get('error')=='Operator authentication failed')
-        third.native('authenticate',operator_password)
-        wait_for('native operator dialog reopens after authentication failure',lambda:not third.full_state().get('error'))
+        third.fill_password(operator_password)
+        wait_for('typed operator password creates a controlled room',lambda:controlled in third.state().get('room','') and third.state().get('room','').startswith('+'))
+        wait_for('controlled room creation authenticates the operator',lambda:third.full_state().get('is_controller') is True)
+        third.password('authenticate',operator_password)
+        wait_for('typed operator authentication succeeds',lambda:third.full_state().get('is_controller') is True)
+        third.password('authenticate','ZZ-000-000')
+        wait_for('wrong typed operator password reports server authentication error',lambda:third.full_state().get('error')=='Operator authentication failed')
+        third.password('authenticate',operator_password)
+        wait_for('operator prompt reopens after authentication failure',lambda:not third.full_state().get('error'))
         third.action('password')
-        active_window=wait_for('native dialog remains open for mpv shutdown test',third.native_window)
+        wait_for('password prompt remains open for mpv shutdown test',third.password_prompt)
         third.close()
-        assert not user.IsWindow(active_window),'mpv shutdown must join and destroy the native input worker'
+        assert third.process.returncode==0,'mpv must quit cleanly with the password prompt open'
         excluded = [secret.encode('utf-8') for secret in (password_a, password_b)]
         excluded += [hashlib.md5(secret.encode()).hexdigest().encode() for secret in (password_a, password_b)]
         excluded += [value.encode() for value in (operator_password,'SYNTHETIC_CANCEL_NOT_SAVED','SYNTHETIC_CLOSE_NOT_SAVED','bad-synthetic-operator')]
@@ -445,13 +426,13 @@ end
         history = json.loads(history_file.read_text(encoding='utf-8'))
         assert all(set(profile) == {'host', 'port', 'username', 'room', 'tls'} for profile in history['profiles'])
         result = dict(result='passed', server='unmodified Syncplay 1.7.6', dpapi='current Windows user',
-                      production_ui='splay.lua + Windows ES_PASSWORD dialogs; non-secret fields use mp.input', fresh_processes=3,
+                      production_ui='splay.lua; passwords and other fields typed into the real mpv console (mp.input)', fresh_processes=3,
                       checks=['fast save/connect', 'explicit combination save and real selector deletion preserves password/live room/media',
                               'ordinary create and join forms require explicit connect and preserve media',
                               'restart', 'room reuse', 'port isolation',
                               'fast endpoint status/connect', 'stale same-endpoint reply', 'opt out', 'delete/restart',
-                              'native Escape/window-close preserves saved password','temporary password native hash reuse',
-                              'native controlled-room creation/operator authentication and failure/reopen','shutdown with native dialog open',
+                              'prompt Escape/unsubmitted close preserves saved password','temporary password endpoint hash reuse',
+                              'controlled-room creation/operator authentication and failure/reopen','shutdown with password prompt open',
                               'encrypted file only; no plaintext or MD5 in history/configuration'],
                       credential_ports=[entry['port'] for entry in entries()], artifacts=str(output))
         (output / 'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')

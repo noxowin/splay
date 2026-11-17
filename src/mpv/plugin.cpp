@@ -6,7 +6,6 @@
 #include "../core/credentials.hpp"
 #include "../core/reconnect.hpp"
 #include "../net/transport.hpp"
-#include "secret_input.hpp"
 #include <windows.h>
 #include <bcrypt.h>
 #include <chrono>
@@ -62,10 +61,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
         splay::History history;
         splay::Credentials credentials;
         splay::Reconnect reconnect;
-        splay::SecretInput secret_input;
         splay::ConnectOptions connection_options;
-        struct PendingSecret { uint64_t id,generation; splay::Json command; std::string room; };
-        std::optional<PendingSecret> pending_secret;
         struct PasswordToken {
             std::string token,host,value; int port=8999; double expires=0;
             void clear(){splay::erase_secret(value);token.clear();host.clear();expires=0;}
@@ -120,13 +116,6 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
             auto payload=result.dump(-1,' ',false,splay::Json::error_handler_t::replace);
             const char* args[]={"script-message-to","splay","splay-secret",payload.c_str(),nullptr};
             mpv_command(h,args);
-        };
-        auto cancel_secret=[&](){
-            secret_input.cancel();
-            if(pending_secret){
-                publish_secret({{"request_id",pending_secret->id},{"purpose",pending_secret->command["purpose"]},{"cancelled",true}});
-                pending_secret.reset();
-            }
         };
         session.send=[&](const splay::Json& j){
             transport.send_line(j.dump());
@@ -210,11 +199,11 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
         };
         publish();
         while(running){
-            // With no connection, retry, password prompt or local offset, only
+            // With no connection, retry or local offset, only
             // an mpv event can change anything: wait for one instead of waking
             // 33 times a second in every player that merely has splay installed.
             // The one-second bound only expires a held password token.
-            auto quiet=[&]{return session.idle()&&!reconnect.pending()&&!pending_secret;};
+            auto quiet=[&]{return session.idle()&&!reconnect.pending();};
             auto* event=mpv_wait_event(h,quiet()?1.0:.03);
             // Read the clock after the wait: everything below happens now.
             const double now=clock_now();
@@ -272,38 +261,54 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                             publish_credential(result);
                         }
                         else if(action=="status")publish_state(true);
-                        else if(action=="secret-cancel"){
-                            if(!c.contains("request_id")||(pending_secret&&c["request_id"]==pending_secret->id))cancel_secret();
-                            password_token.clear();
-                        }
                         else if(action=="password-clear"){
-                            cancel_secret();password_token.clear();session.forget_password();
+                            password_token.clear();session.forget_password();
                         }
-                        else if(action=="secret-input"){
+                        else if(action=="secret-submit"){
+                            // The password was typed into mpv's own input box and
+                            // arrives in this one command; command_guard erases the
+                            // parsed copy when this block ends, whatever happens.
+                            splay::Json response={{"request_id",c.contains("request_id")?c["request_id"]:splay::Json()},
+                                {"purpose",c.contains("purpose")&&c["purpose"].is_string()?c["purpose"]:splay::Json("")},{"cancelled",false}};
                             try{
-                            cancel_secret();
-                            auto purpose=text(c,"purpose",32);
-                            if(purpose!="server"&&purpose!="operator"&&purpose!="create_room")throw std::runtime_error("Invalid password purpose");
-                            if(!c.contains("request_id")||!c["request_id"].is_number_unsigned())throw std::runtime_error("Invalid password request id");
-                            if(purpose=="server"){
-                                c["host"]=splay::Credentials::normalize_host(text(c,"host",1024));
-                                if(!c.contains("port")||!c["port"].is_number_integer()||c["port"].get<long long>()<1||c["port"].get<long long>()>65535)throw std::runtime_error("Invalid port");
-                                if(c.contains("remember_password")&&!c["remember_password"].is_boolean())throw std::runtime_error("Invalid remember password setting");
-                            }
-                            else if(!session.logged())throw std::runtime_error("Connect before entering an operator password");
-                            if(purpose=="create_room")text(c,"room",256);
-                            cancel_secret();
-                            password_token.clear();
-                            const auto id=c["request_id"].get<uint64_t>();
-                            secret_input.request(id,text(c,"title",256,true),text(c,"prompt",1024,true),
-                                text(c,"note",1024,true),text(c,"ok",64,true),text(c,"cancel",64,true));
-                            pending_secret=PendingSecret{id,reconnect.generation(),c,session.room()};
-                            }catch(const std::exception& exception){
-                                cancel_secret();
-                                publish_secret({{"request_id",c.value("request_id",splay::Json())},
-                                    {"purpose",c.contains("purpose")&&c["purpose"].is_string()?c["purpose"]:splay::Json("")},
-                                    {"cancelled",false},{"error",exception.what()}});
-                            }
+                                auto purpose=text(c,"purpose",32);
+                                if(purpose!="server"&&purpose!="operator"&&purpose!="create_room")throw std::runtime_error("Invalid password purpose");
+                                if(!c.contains("request_id")||!c["request_id"].is_number_unsigned())throw std::runtime_error("Invalid password request id");
+                                if(!c.contains("password")||!c["password"].is_string())throw std::runtime_error("Invalid password text");
+                                auto& value=c["password"].get_ref<std::string&>();
+                                if(value.size()>1024||value.find_first_of("\r\n")!=std::string::npos||value.find('\0')!=std::string::npos)throw std::runtime_error("Invalid password text");
+                                if(!value.empty()&&!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),int(value.size()),nullptr,0))throw std::runtime_error("Invalid password text");
+                                password_token.clear();
+                                if(purpose=="server"){
+                                    auto host=splay::Credentials::normalize_host(text(c,"host",1024));
+                                    if(!c.contains("port")||!c["port"].is_number_integer()||c["port"].get<long long>()<1||c["port"].get<long long>()>65535)throw std::runtime_error("Invalid port");
+                                    auto port=c["port"].get<int>();
+                                    if(c.contains("remember_password")&&!c["remember_password"].is_boolean())throw std::runtime_error("Invalid remember password setting");
+                                    if(c.value("remember_password",false)){
+                                        auto save=splay::Json{{"action","credential-save"},{"host",host},{"port",port},{"password",value}};
+                                        auto saved=credentials.handle(save);
+                                        splay::erase_secret(save["password"].get_ref<std::string&>());
+                                        publish_credential(saved);
+                                        if(saved.contains("error"))throw std::runtime_error(saved["error"].get<std::string>());
+                                        response["saved"]=true;
+                                    }
+                                    password_token.token=secret_token(); password_token.host=host; password_token.port=port;
+                                    password_token.value.swap(value); password_token.expires=now+300;
+                                    response["token"]=password_token.token;
+                                }
+                                else{
+                                    // The prompt was opened for this connection and room;
+                                    // an operator password is only meant for them.
+                                    if(!session.logged())throw std::runtime_error("Connect before entering an operator password");
+                                    auto room=text(c,"room",256);
+                                    if(purpose=="operator"&&room!=session.room())throw std::runtime_error("The room changed; enter the operator password again");
+                                    auto command=splay::Json{{"action",purpose=="operator"?"authenticate":"create-room"},{"password",value}};
+                                    if(purpose=="create_room")command["room"]=room;
+                                    try{session.command(command);}catch(...){splay::erase_secret(command["password"].get_ref<std::string&>());throw;}
+                                    splay::erase_secret(command["password"].get_ref<std::string&>());
+                                }
+                            }catch(const std::exception& exception){response["error"]=exception.what();}
+                            publish_secret(response);
                         }
                         else if(action=="reconnect-disable"){
                             reconnect.disable();
@@ -315,7 +320,6 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                         }
                         else if(action=="disconnect"){
                             reconnect.cancel();
-                            cancel_secret();
                             password_token.clear();
                             transport.disconnect();
                             session.disconnected();
@@ -359,7 +363,6 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                             if(c.contains("auto_reconnect")&&!c["auto_reconnect"].is_boolean())throw std::runtime_error("Invalid reconnect setting");
                             if(reuse_password&&!session.can_reuse_password(host,port))throw std::runtime_error("Password entry expired; enter it again");
                             reconnect.start(c.value("auto_reconnect",false));
-                            cancel_secret();
                             password_token.clear();
                             transport.disconnect();
                             pending_seek=false;
@@ -375,11 +378,10 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                         else {
                             if(action=="room"){
                                 if(!session.logged()){
-                                    reconnect.cancel();cancel_secret();transport.disconnect();session.disconnected();
+                                    reconnect.cancel();transport.disconnect();session.disconnected();
                                     throw std::runtime_error("Connect before changing rooms");
                                 }
                                 reconnect.room_changed();
-                                cancel_secret();
                                 password_token.clear();
                             }
                             if(action=="set-offset")sample();
@@ -410,46 +412,6 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                 sample_changes(now);
                 next_sample=now+.1;
             }
-            if(auto result=secret_input.poll()){
-                struct SecretGuard {std::string& value;~SecretGuard(){splay::erase_secret(value);}} guard{result->value};
-                if(pending_secret&&result->id==pending_secret->id){
-                    auto request=std::move(*pending_secret); pending_secret.reset();
-                    const auto purpose=request.command["purpose"].get<std::string>();
-                    splay::Json response={{"request_id",result->id},{"purpose",purpose},{"cancelled",result->cancelled}};
-                    if(request.generation!=reconnect.generation()||
-                        (purpose!="server"&&(!session.logged()||request.room!=session.room())))response["cancelled"]=true;
-                    else if(!result->error.empty())response["error"]=result->error;
-                    else if(!result->cancelled){
-                        try{
-                            if(result->value.size()>1024||result->value.find_first_of("\r\n")!=std::string::npos||result->value.find('\0')!=std::string::npos)throw std::runtime_error("Invalid password text");
-                            if(!result->value.empty()&&!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,result->value.data(),int(result->value.size()),nullptr,0))throw std::runtime_error("Invalid password text");
-                            if(purpose=="server"){
-                                auto host=request.command["host"].get<std::string>();
-                                auto port=request.command["port"].get<int>();
-                                if(request.command.value("remember_password",false)){
-                                    auto save=splay::Json{{"action","credential-save"},{"host",host},{"port",port},{"password",result->value}};
-                                    auto saved=credentials.handle(save);
-                                    splay::erase_secret(save["password"].get_ref<std::string&>());
-                                    publish_credential(saved);
-                                    if(saved.contains("error"))throw std::runtime_error(saved["error"].get<std::string>());
-                                    response["saved"]=true;
-                                }
-                                password_token.clear();
-                                password_token.token=secret_token(); password_token.host=host; password_token.port=port;
-                                password_token.value.swap(result->value); password_token.expires=now+300;
-                                response["token"]=password_token.token;
-                            }
-                            else{
-                                auto command=splay::Json{{"action",purpose=="operator"?"authenticate":"create-room"},{"password",result->value}};
-                                if(purpose=="create_room")command["room"]=request.command["room"];
-                                try{session.command(command);}catch(...){splay::erase_secret(command["password"].get_ref<std::string&>());throw;}
-                                splay::erase_secret(command["password"].get_ref<std::string&>());
-                            }
-                        }catch(const std::exception& exception){response["error"]=exception.what();}
-                    }
-                    publish_secret(response);
-                }
-            }
             if(password_token.expires&&now>=password_token.expires)password_token.clear();
             // Transport generations and terminating the current batch together
             // prevent Closed/old lines from overwriting a newly scheduled retry.
@@ -471,7 +433,6 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                 }
                 if(terminal||session.connection()=="error"){
                     reconnect.failed(session.retryable(),session.error(),now);
-                    cancel_secret();
                     transport.disconnect();
                     publish();
                     break;
@@ -481,7 +442,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
             session.tick(now);
             if(!failed_before_tick&&session.connection()=="error"){
                 reconnect.failed(session.retryable(),session.error(),now);
-                cancel_secret(); transport.disconnect(); publish();
+                transport.disconnect(); publish();
             }
             if(reconnect.due(now)){
                 pending_seek=false;expected_seek.reset();expected_pause.reset();have_previous=false;
@@ -494,14 +455,14 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                 // A failure outside command handling must not end this thread:
                 // the interface would stay loaded with no core behind it. Drop
                 // the connection, show the reason and keep serving commands.
-                reconnect.cancel();cancel_secret();password_token.clear();
+                reconnect.cancel();password_token.clear();
                 transport.disconnect();
                 have_previous=false;pending_seek=false;
                 expected_seek.reset();expected_pause.reset();
                 session.disconnected(std::string("Internal error: ")+exception.what());
             }
         }
-        reconnect.cancel();cancel_secret();password_token.clear();session.forget_password();
+        reconnect.cancel();password_token.clear();session.forget_password();
         transport.disconnect();
         return 0;
     }
