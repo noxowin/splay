@@ -431,36 +431,96 @@ local function credential_change(action)
     password_token=nil;has_private_password=false;credential_saved=false
     credential_dispatch()
 end
-local CHAT_NICK_COLORS={'7CC8FF','97DC9A','E4B2FF','82DAD9','A9C5FF','A4D7FA',
-    'FFB8CB','B5E7FF','BAF0CF','F6B5EA','FFD09D','DCF0A3',
-    'F1D2FF','B5FFE2','A3E8F4','FFABC0','D2B0FF','8EF0BC',
-    'FFDEA6','C5CFFF','EBA8D4','A7F0EA','D6E89B','ECC4B4'}
+-- Nickname colours as ASS BGR hex with their OKLab coordinates (L, a, b),
+-- worked out offline from the sRGB values: twelve hues at OKLab lightness 0.80
+-- and twelve at 0.66, half a hue step apart, all readable with the dark
+-- outline. OKLab distance follows how different two colours look; any two
+-- entries here differ by at least 0.05 (about 0.02 is just noticeable).
+local NICK_PALETTE={
+    {'A69FFE',0.8002,0.1095,0.0297}, {'7AA4FF',0.8006,0.0858,0.0868}, {'39AEF5',0.7995,0.0383,0.1450}, {'3BC2CC',0.7988,-0.0390,0.1448},
+    {'6CD392',0.7999,-0.1068,0.1065}, {'A5DC41',0.8009,-0.1454,0.0398}, {'D9D806',0.7994,-0.1309,-0.0360}, {'FECF42',0.7997,-0.0946,-0.0945},
+    {'FFC191',0.8004,-0.0262,-0.0988}, {'FEB4B6',0.7986,0.0270,-0.1006}, {'FF9FE1',0.7996,0.1043,-0.1052}, {'D396FF',0.8005,0.1397,-0.0373},
+    {'5D6DDA',0.6591,0.1212,0.0697}, {'267BCF',0.6607,0.0690,0.1216}, {'048DB2',0.6595,0.0003,0.1340}, {'2A9E88',0.6603,-0.0696,0.1212},
+    {'62AA47',0.6612,-0.1218,0.0708}, {'95A90D',0.6594,-0.1177,-0.0005}, {'B9A401',0.6590,-0.0981,-0.0583}, {'DE9C25',0.6607,-0.0705,-0.1200},
+    {'E88C71',0.6606,-0.0003,-0.1404}, {'DB7CA0',0.6599,0.0706,-0.1222}, {'BB70C1',0.6599,0.1212,-0.0707}, {'8F6AD5',0.6599,0.1396,-0.0006}}
 local chat_user_colors,chat_used_colors,chat_color_count={},{},0
+local function nick_distance(x,y)
+    return math.sqrt((x[2]-y[2])^2+(x[3]-y[3])^2+(x[4]-y[4])^2)
+end
+local nick_entries={}
+for _,entry in ipairs(NICK_PALETTE) do nick_entries[entry[1]]=entry end
 local function user_colour(name)
-    -- Hash the complete nickname before display escaping or shortening. Preserve
-    -- each assignment for this process, regardless of room/readiness changes.
+    -- Keyed by the complete nickname before display escaping or shortening,
+    -- and kept for this process whatever happens to the room or readiness.
     name=tostring(name or '')
     if chat_user_colors[name] then return chat_user_colors[name] end
     local hash=0
     for i=1,#name do hash=(hash*33+name:byte(i))%65521 end
-    local first=hash%#CHAT_NICK_COLORS+1
-    local colour=CHAT_NICK_COLORS[first]
-    if chat_color_count>=1024 then return colour end
-    for offset=0,#CHAT_NICK_COLORS-1 do
-        local candidate=CHAT_NICK_COLORS[(first+offset-1)%#CHAT_NICK_COLORS+1]
-        if not chat_used_colors[candidate] then colour=candidate;break end
+    local count=#NICK_PALETTE
+    local first=hash%count+1
+    if chat_color_count>=1024 then return NICK_PALETTE[first][1] end
+    -- A new nickname gets the colour that looks most different from those
+    -- already handed out, so the people in a room are easy to tell apart.
+    -- Once all colours are taken, only the members now in the room count.
+    local exhausted=chat_color_count>=count
+    local against={}
+    if not exhausted then
+        for hex in pairs(chat_used_colors) do against[#against+1]=nick_entries[hex] end
+    else
+        for _,member in ipairs(state.members or {}) do
+            local hex=chat_user_colors[tostring(member.username or '')]
+            if hex then against[#against+1]=nick_entries[hex] end
+        end
     end
+    local best,best_score=nil,-1
+    for offset=0,count-1 do
+        local entry=NICK_PALETTE[(first+offset-1)%count+1]
+        if exhausted or not chat_used_colors[entry[1]] then
+            local score=math.huge
+            for _,other in ipairs(against) do score=math.min(score,nick_distance(entry,other)) end
+            -- Strictly greater: an equal score keeps the hash's earlier pick.
+            if score>best_score then best,best_score=entry,score end
+        end
+    end
+    local colour=best[1]
     chat_user_colors[name]=colour;chat_used_colors[colour]=true
     chat_color_count=chat_color_count+1
     return colour
 end
-local function append_message(text,category,id,username,chat_text)
+-- Text built from a translated template, with each %s filled from the
+-- arguments in order. A {text=,color=} argument keeps its colour, so a
+-- nickname can be drawn in its own colour wherever the template puts it.
+local function format_spans(template,...)
+    local args,spans,index,at={...},{},0,1
+    while true do
+        local s,e=template:find('%s',at,true)
+        if not s then break end
+        if s>at then spans[#spans+1]={text=template:sub(at,s-1)} end
+        index=index+1
+        local value=args[index]
+        if type(value)=='table' then spans[#spans+1]={text=tostring(value.text or ''),color=value.color}
+        else spans[#spans+1]={text=tostring(value==nil and '' or value)} end
+        at=e+1
+    end
+    if at<=#template then spans[#spans+1]={text=template:sub(at)} end
+    return spans
+end
+local function spans_text(spans)
+    local out={}
+    for _,span in ipairs(spans) do out[#out+1]=span.text end
+    return table.concat(out)
+end
+local function nickname(value)
+    local raw=value.username or value.user
+    return {text=plain(raw),color=user_colour(raw)}
+end
+local function append_message(text,category,id,username,chat_text,spans)
     local key=id and ('native:'..tostring(id)) or nil
     if key and seen_events[key] then return false end
     if key then seen_events[key]=true end
     messages[#messages+1]={text=plain(text,8192),category=category or 'notice',time=os.date('%H:%M:%S'),key=key,
         username=username and plain(username,1024),chat_text=chat_text and plain(chat_text,8192),
-        chat_color=username and user_colour(username)}
+        chat_color=username and user_colour(username),spans=spans}
     if #messages>300 then
         local removed=table.remove(messages,1)
         if removed.key then seen_events[removed.key]=nil end
@@ -1088,6 +1148,8 @@ local function console_lines(event,units)
     if event.category=='chat' and event.username and event.chat_text then
         fragment(event.username,event.chat_color or user_colour(event.username))
         fragment(': '..event.chat_text,'FFFFFF')
+    elseif event.spans then
+        for _,span in ipairs(event.spans) do fragment(span.text,span.color or 'C9C3BD') end
     else fragment(event.text,event.category=='error' and '8E9DFF' or 'C9C3BD') end
     if #line>0 then result[#result+1]=table.concat(line) end
     return result
@@ -1567,45 +1629,50 @@ mp.register_script_message('splay-secret',function(json)
     publish()
     if connect_waiting and not value.error and not value.cancelled and request.purpose=='server' then connect() end
 end)
-local function event_text(value)
-    local user=plain(value.username or value.user)
-    if value.type=='chat' and type(value.text)=='string' then return user..': '..value.text end
+local function event_spans(value)
+    if value.type=='chat' and type(value.text)=='string' then
+        return {{text=plain(value.username or value.user)..': '..value.text}}
+    end
     if value.type=='playback' then
         local position=tonumber(value.position)
         local verb=value.seek and T('%s 跳转') or (value.paused and T('%s 暂停') or T('%s 播放'))
-        return verb:format(user)..(position and (' · '..T('%s 秒'):format(math.floor(position))) or '')
+        local spans=format_spans(verb,nickname(value))
+        if position then spans[#spans+1]={text=' · '..T('%s 秒'):format(math.floor(position))} end
+        return spans
     end
     if value.type=='connection' then
         if value.connection=='error' then return nil end
-        return T('连接: %s'):format(label_of(connection_labels,value.connection) or plain(value.connection))
+        return {{text=T('连接: %s'):format(label_of(connection_labels,value.connection) or plain(value.connection))}}
     end
-    if value.type=='room' then return T('切换房间: %s'):format(plain(value.room)) end
+    if value.type=='room' then return {{text=T('切换房间: %s'):format(plain(value.room))}} end
     if value.type=='catchup' then
-        if value.action=='slow' then return T('与 %s 有时间差，暂时减速追赶'):format(user) end
-        if value.action=='normal' then return T('已追上房间进度，恢复正常速度') end
+        if value.action=='slow' then return format_spans(T('与 %s 有时间差，暂时减速追赶'),nickname(value)) end
+        if value.action=='normal' then return {{text=T('已追上房间进度，恢复正常速度')}} end
     end
     if value.type=='ready' then
-        return (value.ready==true and T('%s 已准备') or (value.ready==false and T('%s 未准备') or T('%s 准备状态未知'))):format(user)
+        return format_spans(value.ready==true and T('%s 已准备') or (value.ready==false and T('%s 未准备') or T('%s 准备状态未知')),nickname(value))
     end
     if value.type=='autostart' then
-        if value.action=='started' then return T('全员准备倒计时结束，已自动开播') end
+        if value.action=='started' then return {{text=T('全员准备倒计时结束，已自动开播')}} end
         if value.action=='cancelled' then
             local reason=label_of(autostart_reasons,value.reason)
-            return reason and T('自动开播已取消：%s'):format(reason) or T('自动开播已取消')
+            return {{text=reason and T('自动开播已取消：%s'):format(reason) or T('自动开播已取消')}}
         end
     end
     if value.type=='user' then
         if value.action=='file' then
             local file=type(value.file)=='table' and value.file.name or value.file
-            return T('%s 更换媒体: %s'):format(user,plain(file))
+            return format_spans(T('%s 更换媒体: %s'),nickname(value),plain(file))
         end
         local action=({joined=N_('%s 加入房间: %s'),left=N_('%s 离开房间: %s'),room=N_('%s 切换房间: %s')})[value.action]
-        if action then return T(action):format(user,plain(value.room)) end
+        if action then return format_spans(T(action),nickname(value),plain(value.room)) end
     end
     if value.type=='playlist' then
-        if value.action=='files' and type(value.files)=='table' then return T('%s 更新共享播放列表: %s 项'):format(user,#value.files) end
+        if value.action=='files' and type(value.files)=='table' then
+            return format_spans(T('%s 更新共享播放列表: %s 项'),nickname(value),#value.files)
+        end
         local index=tonumber(value.index)
-        return T('%s 切换共享播放项: %s'):format(user,index and tostring(index+1) or T('无'))
+        return format_spans(T('%s 切换共享播放项: %s'),nickname(value),index and tostring(index+1) or T('无'))
     end
 end
 mp.register_script_message('splay-event',function(json)
@@ -1614,15 +1681,22 @@ mp.register_script_message('splay-event',function(json)
     if type(value)~='table' or value.schema~=1 then return end
     if value.type=='user' and (type(state.room)~='string' or state.room=='' or
         (value.room~=state.room and value.previous_room~=state.room)) then return end
-    local text=event_text(value)
-    if not text or not append_message(text,value.type,value.id,value.type=='chat' and (value.username or value.user),value.type=='chat' and value.text) then return end
-    if value.type=='chat' then
+    local spans=event_spans(value)
+    if not spans then return end
+    local text=spans_text(spans)
+    local chat=value.type=='chat'
+    if not append_message(text,value.type,value.id,chat and (value.username or value.user),chat and value.text,not chat and spans or nil) then return end
+    if chat then
         value.chat_color=user_colour(value.username or value.user)
         overlay('splay-event',utils.format_json(value))
-    elseif value.type=='playback' then overlay('splay-event',json)
+    elseif value.type=='playback' then
+        -- The overlay words the playback line itself; give it the colour.
+        value.user_color=user_colour(value.username or value.user)
+        overlay('splay-event',utils.format_json(value))
     else
         message_serial=message_serial+1
-        overlay('splay-event',utils.format_json({schema=1,id='ui:'..message_serial,type='notice',text=plain(text),category=value.type}))
+        overlay('splay-event',utils.format_json({schema=1,id='ui:'..message_serial,type='notice',text=plain(text),
+            category=value.type,spans=spans}))
     end
     publish()
 end)

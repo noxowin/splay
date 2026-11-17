@@ -889,5 +889,83 @@ local saved_language=utils.parse_json(utils.format_json(history));saved_language
 history_reply(saved_language)
 assert(model().items[5].title=='Settings' and display_state().settings.language=='en','saved language preference is restored')
 
+-- Nickname colours: the people in a room get colours that look clearly
+-- different, and the top-left status lines and history use the same colour
+-- as chat. Distances in OKLab, computed here from the ASS BGR hex.
+local function oklab(hex)
+    local function linear(c) c=c/255;return c<=.04045 and c/12.92 or ((c+.055)/1.055)^2.4 end
+    local b,g,r=linear(tonumber(hex:sub(1,2),16)),linear(tonumber(hex:sub(3,4),16)),linear(tonumber(hex:sub(5,6),16))
+    local l=(.4122214708*r+.5363325363*g+.0514459929*b)^(1/3)
+    local m=(.2119034982*r+.6806995451*g+.1073969566*b)^(1/3)
+    local s=(.0883024619*r+.2817188376*g+.6299787005*b)^(1/3)
+    return {.2104542553*l+.7936177850*m-.0040720468*s,1.9779984951*l-2.4285922050*m+.4505937099*s,.0259040371*l+.7827717662*m-.8086757660*s}
+end
+local function distance(x,y)
+    local a,b=oklab(x),oklab(y)
+    return math.sqrt((a[1]-b[1])^2+(a[2]-b[2])^2+(a[3]-b[3])^2)
+end
+local function overlay_events(from)
+    local found={}
+    for i=from or 1,#commands do
+        local item=commands[i]
+        if item[2]=='splay_overlay' and item[3]=='splay-event' then found[#found+1]=utils.parse_json(item[4]) end
+    end
+    return found
+end
+local function name_span(event,name)
+    for _,span in ipairs(event.spans or {}) do if span.text==name then return span end end
+end
+start({language='zh-CN'});act('toggle-enabled')
+state({room='colour-room',username='self',members={}})
+local mark=#commands+1
+local people={'alice','bob','carol','dave','erin','frank'}
+for index,name in ipairs(people) do
+    handlers['splay-event'](utils.format_json({schema=1,id=900+index,type='user',action='joined',username=name,room='colour-room'}))
+end
+local colours={}
+for index,event in ipairs(overlay_events(mark)) do
+    assert(event.type=='notice' and event.text==people[index]..' 加入房间: colour-room',event.text)
+    local span=name_span(event,people[index])
+    assert(span and span.color and span.color:match('^%x%x%x%x%x%x$'),'the nickname is a coloured piece of the status line')
+    assert(event.spans[1]==span and event.spans[2].text==' 加入房间: ' and not event.spans[2].color,'only the nickname is coloured')
+    colours[#colours+1]=span.color
+end
+assert(#colours==6)
+local closest=math.huge
+for i=1,#colours do for j=i+1,#colours do closest=math.min(closest,distance(colours[i],colours[j])) end end
+assert(closest>=.12,'six people get clearly different colours: closest OKLab distance '..closest)
+-- The same person keeps the same colour in every place.
+mark=#commands+1
+handlers['splay-event'](utils.format_json({schema=1,id=910,type='chat',username='bob',text='hi'}))
+handlers['splay-event'](utils.format_json({schema=1,id=911,type='ready',username='bob',ready=true}))
+handlers['splay-event'](utils.format_json({schema=1,id=912,type='playback',username='bob',paused=true,position=12}))
+handlers['splay-event'](utils.format_json({schema=1,id=913,type='catchup',action='slow',username='bob'}))
+local later=overlay_events(mark)
+assert(later[1].type=='chat' and later[1].chat_color==colours[2])
+assert(name_span(later[2],'bob').color==colours[2] and later[2].text=='bob 已准备')
+assert(later[3].type=='playback' and later[3].user_color==colours[2],'the playback line gets the colour too')
+local slow=later[4]
+assert(slow.spans[1].text=='与 ' and slow.spans[2].text=='bob' and slow.spans[2].color==colours[2] and slow.spans[3].text:find('有时间差',1,true))
+-- History draws the nickname in its colour in event lines as well.
+act('message-history')
+assert(console_layer.data:find('{\\1c&H'..colours[2]..'&}b',1,true),'history colours the nickname in event lines')
+assert(console_layer.data:find('{\\1c&HC9C3BD&} ',1,true),'the rest of an event line keeps the history grey')
+dismiss()
+-- A nickname inside the sentence: English puts the name elsewhere.
+start({language='en'});act('toggle-enabled')
+state({room='colour-room',username='self',members={}})
+mark=#commands+1
+handlers['splay-event'](utils.format_json({schema=1,id=920,type='catchup',action='slow',username='alice'}))
+handlers['splay-event'](utils.format_json({schema=1,id=921,type='user',action='joined',username='bob',room='colour-room'}))
+local english=overlay_events(mark)
+assert(english[1].spans[1].text=='Ahead of ' and english[1].spans[2].text=='alice' and english[1].spans[2].color and
+    english[1].spans[3].text=='; slowing down to let the room catch up',utils.format_json(english[1].spans))
+assert(english[2].spans[1].text=='bob' and english[2].spans[1].color and english[2].spans[1].color~=english[1].spans[2].color)
+-- Messages without a person stay a single uncoloured piece.
+mark=#commands+1
+handlers['splay-event'](utils.format_json({schema=1,id=922,type='room',room='elsewhere'}))
+local room_notice=overlay_events(mark)[1]
+assert(#room_notice.spans==1 and not room_notice.spans[1].color)
+
 print('UI_FORMS_PASSED default off, Settings and room actions, endpoint editing, encrypted credential commands, password prompts with submit/cancel/stale reply isolation, playlist handoff, 300-event transparent persistent history, stable nickname colours and white body, continuous chat and Esc/stale-room guards, conditional shortcuts, modal generations, saved-profile navigation, preference restore/touch/save, strict durations, editable local offsets and stale candidates, media privacy and lifecycle, overlay replay, English labels, runtime language switch, auto system language and fallback')
 real_mp.commandv('quit')

@@ -57,12 +57,13 @@ local uosc_defaults = {controls='',timeline_size=40,controls_size=32,controls_ma
 local uosc_cfg = {}
 local escape_section = section..'-escape'
 local last_activity, last_mouse, panel_visible, panel_geometry = mp.get_time(), {}, false, nil
-local notification_count, panel_rows = 0, {}
+local notification_count, panel_rows, status_rows = 0, {}, {}
 local danmaku, console_open = {}, false
 local RTT_GOOD_MS, RTT_FAIR_MS, RTT_MAX_MS = 100, 250, 10000
-local CHAT_NICK_COLORS = {'7CC8FF','97DC9A','E4B2FF','82DAD9','A9C5FF','A4D7FA',
-    'FFB8CB','B5E7FF','BAF0CF','F6B5EA','FFD09D','DCF0A3','F1D2FF','B5FFE2',
-    'A3E8F4','FFABC0','D2B0FF','8EF0BC','FFDEA6','C5CFFF','EBA8D4','A7F0EA','D6E89B','ECC4B4'}
+-- Same palette as the main script, which assigns the colours; this is only
+-- the fallback for a message that arrives without one.
+local CHAT_NICK_COLORS = {'A69FFE','7AA4FF','39AEF5','3BC2CC','6CD392','A5DC41','D9D806','FECF42','FFC191','FEB4B6','FF9FE1','D396FF',
+    '5D6DDA','267BCF','048DB2','2A9E88','62AA47','95A90D','B9A401','DE9C25','E88C71','DB7CA0','BB70C1','8F6AD5'}
 local DANMAKU_MAX_LANES = 6
 local animation_timer, schedule_animation
 local animation_epoch, animation_period, animation_frame = nil, 1/60, -1
@@ -427,6 +428,36 @@ local function nickname_color(username)
     for i=1,#username do hash=(hash*33+username:byte(i))%65521 end
     return CHAT_NICK_COLORS[hash%#CHAT_NICK_COLORS+1]
 end
+local function valid_color(value)
+    return type(value)=='string' and value:match('^%x%x%x%x%x%x$') and value or nil
+end
+-- Coloured pieces of a status line from the main script: plain text, bounded,
+-- with only a six-digit colour kept. Anything else drops the colours.
+local function status_spans(value)
+    if type(value)~='table' or #value==0 or #value>12 then return nil end
+    local spans={}
+    for i=1,#value do
+        local span=value[i]
+        if type(span)~='table' or type(span.text)~='string' then return nil end
+        spans[i]={text=plain(span.text,200),color=valid_color(span.color)}
+    end
+    return spans
+end
+local function fill_spans(template, ...)
+    local args,spans,index,at={...},{},0,1
+    while true do
+        local s,e=template:find('%s',at,true)
+        if not s then break end
+        if s>at then spans[#spans+1]={text=template:sub(at,s-1)} end
+        index=index+1
+        local value=args[index]
+        if type(value)=='table' then spans[#spans+1]={text=value.text,color=value.color}
+        else spans[#spans+1]={text=tostring(value or '')} end
+        at=e+1
+    end
+    if at<=#template then spans[#spans+1]={text=template:sub(at)} end
+    return spans
+end
 local function colored_chat(prefix, body, x, y, size, color)
     return line(prefix,color,x,y,size)..'{\\1c&HFFFFFF&}: '..escape(body)
 end
@@ -560,6 +591,8 @@ local function publish_geometry()
         notification_count=notification_count,room_panel_visible=panel_visible,
         autostart_remaining=autostart_countdown(),
         room_panel=panel_visible and panel_geometry or nil,room_rows=panel_visible and panel_rows or {},
+        -- The ASS of the status lines at the top left, for the tests.
+        status_rows=status_rows,
         chat_available=chat_available(),chat_button=visible and rectangles[2] or nil,
         status_shown=not console_open and state.enabled==true and cfg.status_osd and (panel_visible or notification_count>0 or autostart_countdown()~=nil)})
 end
@@ -576,6 +609,7 @@ redraw = function()
     status.res_x, status.res_y = width, height
     local size = safe_number(cfg.overlay_font_size,22,12,40)*scale
     local margin, y, rows = 22*scale, 22*scale, {}
+    status_rows = {}
     -- Soft wrapping and bounded rows keep long names/chat within the viewport.
     local panel_limit=math.min(400*scale,width*.48)
     -- Font size depends only on the viewport, so changing filenames cannot
@@ -601,18 +635,35 @@ redraw = function()
     end
     local panel_width=math.min(panel_limit,preferred_units*panel_size)
     local columns = math.max(4, math.floor((width-panel_width-3*margin)/size))
+    -- value is plain text in tint, or spans whose own colour, where set,
+    -- replaces the tint (a nickname). Wrapped by grapheme, at most max_rows.
     local function add(value, tint, max_rows)
-        local row, n, count = {}, 0, 0
-        for _,cp in ipairs(graphemes(value)) do
-            row[#row+1], n = cp, n+1
-            if n >= columns then
-                count=count+1
-                rows[#rows+1]=line(table.concat(row)..(count>=max_rows and '…' or ''),tint,margin,y,size)
-                y=y+size*1.35; row={}; n=0
-                if count>=max_rows then return end
+        local spans=type(value)=='table' and value or {{text=value}}
+        local segments, n, count = {}, 0, 0
+        local function flush(more)
+            local row
+            for i,segment in ipairs(segments) do
+                local text=table.concat(segment.parts)
+                row=i==1 and line(text,segment.color,margin,y,size) or row..'{\\1c&H'..segment.color..'&}'..escape(text)
+            end
+            if more then row=row..'{\\1c&H'..tint..'&}…' end
+            rows[#rows+1]=row; status_rows[#status_rows+1]=row
+            y=y+size*1.35; segments={}; n=0
+        end
+        for _,span in ipairs(spans) do
+            local color=span.color or tint
+            for _,cp in ipairs(graphemes(span.text)) do
+                local last=segments[#segments]
+                if not last or last.color~=color then last={parts={},color=color};segments[#segments+1]=last end
+                last.parts[#last.parts+1], n = cp, n+1
+                if n >= columns then
+                    count=count+1
+                    flush(count>=max_rows)
+                    if count>=max_rows then return end
+                end
             end
         end
-        if #row>0 then rows[#rows+1]=line(table.concat(row),tint,margin,y,size); y=y+size*1.35 end
+        if n>0 then flush(false) end
     end
     panel_visible=show_panel; panel_rows={}; panel_geometry=nil
     local danmaku_count=0
@@ -621,10 +672,10 @@ redraw = function()
     if not console_open and cfg.status_osd and state.enabled==true then
         local countdown=autostart_countdown()
         if countdown and not panel_visible then add(T('自动开播 · %s 秒（菜单可取消）'):format(countdown),'FFFF75',2) end
-        if playback then add(playback.text,'FFFF75',2) end
+        if playback then add(playback.spans or playback.text,'FFFF75',2) end
         for _,item in ipairs(notices) do
             if y+size*2.7>height*.62 then break end
-            add(item.text,'BBBBBB',2)
+            add(item.spans or item.text,'BBBBBB',2)
         end
         if normalize_chat_mode(cfg.chat_mode)=='room' then
             local units=math.max(3,(width-panel_width-3*margin)/size)
@@ -1127,7 +1178,7 @@ mp.register_script_message('splay-event',function(json)
         chat_token_time=now
         if chat_tokens<1 then return end
         chat_tokens=chat_tokens-1
-        local color=type(value.chat_color)=='string' and value.chat_color:match('^%x%x%x%x%x%x$') and value.chat_color or nickname_color(user)
+        local color=valid_color(value.chat_color) or nickname_color(user)
         local item={username=user,color=color,text=plain(value.text,200),
             expires=mp.get_time()+safe_number(cfg.overlay_chat_ttl,5,1,120)}
         if normalize_chat_mode(cfg.chat_mode)=='danmaku' then
@@ -1142,12 +1193,15 @@ mp.register_script_message('splay-event',function(json)
         -- Repeated identical status bursts occupy one bounded slot; all status
         -- messages expire even while the room panel remains visible on pause.
         if notices[#notices] and notices[#notices].text==text and now-notices[#notices].created<.5 then return end
-        notices[#notices+1]={text=text,created=now,expires=now+safe_number(cfg.overlay_message_ttl,5,1,120)}
+        notices[#notices+1]={text=text,spans=status_spans(value.spans),created=now,expires=now+safe_number(cfg.overlay_message_ttl,5,1,120)}
         while #notices>4 do table.remove(notices,1) end
     else
         local action=value.seek==true and T('%s 跳转到 %s') or value.paused==true and T('%s 暂停于 %s') or value.paused==false and T('%s 恢复播放于 %s') or nil
         if not action then return end
-        playback={text=action:format(user,time_string(value.position)),expires=mp.get_time()+safe_number(cfg.overlay_message_ttl,5,1,120)}
+        local color=valid_color(value.user_color)
+        playback={text=action:format(user,time_string(value.position)),
+            spans=color and fill_spans(action,{text=user,color=color},time_string(value.position)) or nil,
+            expires=mp.get_time()+safe_number(cfg.overlay_message_ttl,5,1,120)}
     end
     redraw()
 end)
