@@ -34,7 +34,9 @@ Local time offset can be entered or suggested from a member's duration, then
 edited and confirmed. It is not saved across processes and resets for new media.
 Shared playlists do not transfer media. Local following defaults off. Sharing
 network URLs and opening unfamiliar network entries require explicit confirmation.
-Passwords use masked dialogs and Windows current-user encrypted memory.
+Passwords are typed into the mpv input box and are visible while typed;
+remembered ones are stored encrypted for the current Windows user. Debug-level
+mpv logs, including any --log-file, contain typed passwords in plain text.
 Do not share private settings, history, credentials or debug logs.
 
 UNINSTALL

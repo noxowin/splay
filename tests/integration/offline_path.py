@@ -1,24 +1,21 @@
 """What a player does while it is not in a room: the resting core, the local
-time offset and the Windows password box, on a real mpv with the production
-DLL and scripts.
+time offset and the password prompt, on a real mpv with the production DLL
+and scripts.
 
-While disconnected with no offset, no pending reconnect and no password box,
-the core only waits for player events and does not watch playback. Nothing the
-user does in that time may leak into a later offset or into the room they join
-next. The core suites cannot see this: it lives between the adapter's event
-loop and a real player.
+While disconnected with no offset and no pending reconnect, the core only
+waits for player events and does not watch playback. Nothing the user does in
+that time may leak into a later offset or into the room they join next. The
+core suites cannot see this: it lives between the adapter's event loop and a
+real player.
 
 A second player (DLL plus the observer from interop.py) sits in the room as
 the reference for room time, on an unmodified official server protected by a
 generated password. Everything is driven from outside the player: splay menu
-actions and player commands over mpv's IPC, real console key presses for the
-offset prompt, and window messages for the password box. Only processes in
-this harness's Windows job are touched; all files live under a fresh .local
-directory.
+actions and player commands over mpv's IPC, and real console key presses for
+the offset and password prompts. Only processes in this harness's Windows job
+are touched; all files live under a fresh .local directory.
 """
 import argparse
-import ctypes
-from ctypes import wintypes
 import json
 import os
 from pathlib import Path
@@ -28,12 +25,13 @@ import subprocess
 import time
 import uuid
 
-from interop import Job, Player as Observer, ROOT, background_window, send_behind, wait_for
+from interop import Job, Player as Observer, ROOT, background_window, wait_for
 
 # Prepended to copies of the production scripts. They only mirror what the
 # scripts already receive into player properties; every message is still
-# handled by the production code. A password-box result is recorded as having
-# arrived, never with its token.
+# handled by the production code. A prompt is recorded with its text but never
+# with what was typed, and a password result as having arrived, never with its
+# token.
 OVERLAY_PROBE = '''local register=mp.register_script_message
 mp.register_script_message=function(name,fn)
     if name=='splay-state' then register(name,function(json)
@@ -45,7 +43,7 @@ MAIN_PROBE = '''local input=require 'mp.input'
 for _,kind in ipairs({'get','select'}) do
     local original=input[kind]
     input[kind]=function(request)
-        local status={kind=kind,submitted=false,closed=false}
+        local status={kind=kind,prompt=request.prompt,submitted=false,closed=false}
         mp.set_property_native('user-data/splay-test-input',status)
         local submit,closed=request.submit,request.closed
         request.submit=function(value)
@@ -100,27 +98,6 @@ def main():
     password = 'offline-' + uuid.uuid4().hex
     room = 'offline-' + uuid.uuid4().hex[:8]
     job, logs, findings = Job(), [], []
-
-    user = ctypes.WinDLL('user32', use_last_error=True)
-    enum_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    user.EnumWindows.argtypes = [enum_type, wintypes.LPARAM]
-    user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
-    user.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
-    user.GetDlgItem.argtypes = [wintypes.HWND, ctypes.c_int]
-    user.GetDlgItem.restype = wintypes.HWND
-    user.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
-    user.GetWindowLongPtrW.restype = ctypes.c_ssize_t
-    user.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-    user.SendMessageW.restype = ctypes.c_ssize_t
-    user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-    user.IsWindow.argtypes = [wintypes.HWND]
-    user.IsWindowVisible.argtypes = [wintypes.HWND]
-    user.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
-
-    def window_text(hwnd):
-        buffer = ctypes.create_unicode_buffer(1024)
-        user.GetWindowTextW(hwnd, buffer, len(buffer))
-        return buffer.value
 
     def note(text, **values):
         findings.append(dict(step=text, **values))
@@ -223,45 +200,38 @@ def main():
             wait_for('typed offset %s applies' % text, lambda: self.offset() == float(text))
             self.cmd('keypress', 'ESC')
 
-        def boxes(self, visible_only=False):
-            found = []
+        def password_prompt(self):
+            """The open password prompt's status, if one is open."""
+            status = self.get('user-data/splay-test-input') or {}
+            prompt = status.get('prompt') or ''
+            return status if status.get('kind') == 'get' and not status.get('closed') and \
+                ('输入时可见' in prompt or 'visible while typing' in prompt) else None
 
-            @enum_type
-            def visit(hwnd, _):
-                pid = wintypes.DWORD()
-                user.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                if pid.value == self.process.pid:
-                    kind = ctypes.create_unicode_buffer(100)
-                    user.GetClassNameW(hwnd, kind, len(kind))
-                    if kind.value == 'splay.SecretInput' and user.GetDlgItem(hwnd, 1001) and \
-                            (not visible_only or user.IsWindowVisible(hwnd)):
-                        found.append(hwnd)
-                return True
-            user.EnumWindows(visit, 0)
-            return found
-
-        def open_box(self):
+        def open_prompt(self):
             self.action('password')
-            box = wait_for('password box opens', lambda: (self.boxes() or [None])[0])
-            send_behind(box)
-            return box
+            status = wait_for('password prompt opens', self.password_prompt)
+            wait_for('the mpv console takes the keys', lambda: self.get('user-data/mpv/console/open') is True)
+            time.sleep(.4)
+            return status
 
         def secret(self):
             return self.get('user-data/splay-test-secret') or {'count': 0}
 
-        def finish_box(self, hwnd, how, text=None):
-            """Close the box and return how long its result took to reach the interface."""
-            edit = user.GetDlgItem(hwnd, 1001)
+        def finish_prompt(self, how, text=''):
+            """Type into the open prompt and leave it with Enter or Esc. After
+            Enter, return how long the core's answer took to reach the
+            interface; after Esc, check that the core is never asked."""
             before = self.secret()['count']
-            if text is not None:
-                buffer = ctypes.create_unicode_buffer(text)
-                assert user.SendMessageW(edit, 0xC, 0, ctypes.cast(buffer, ctypes.c_void_p).value)  # WM_SETTEXT
-            if how == 'close':
-                user.PostMessageW(hwnd, 0x10, 0, 0)  # WM_CLOSE
-            else:
-                user.PostMessageW(edit, 0x100, 0x1B if how == 'escape' else 0x0D, 0)  # WM_KEYDOWN
-            wait_for('password box closes', lambda: not user.IsWindow(hwnd))
+            for character in text:
+                self.cmd('keypress', character)
+            self.cmd('keypress', 'ENTER' if how == 'enter' else 'ESC')
+            wait_for('password prompt closes', lambda: not self.password_prompt())
             closed = time.perf_counter()
+            if how != 'enter':
+                time.sleep(.5)
+                assert self.secret()['count'] == before, 'a cancelled prompt must not reach the core'
+                assert self.get('user-data/mpv/console/open') is not True
+                return None
             wait_for('its result reaches the interface', lambda: self.secret()['count'] == before + 1)
             return round(time.perf_counter() - closed, 3)
 
@@ -344,49 +314,43 @@ def main():
         assert p.offset() == 0
         note('loading different media offline clears the offset')
 
-        # ---- Password box with no connection --------------------------------------
-        assert not p.boxes()
-        box = p.open_box()
-        assert user.GetWindowLongPtrW(user.GetDlgItem(box, 1001), -16) & 0x20, 'edit control must have the password style'
-        assert user.IsWindowVisible(box)
-        assert p.get('user-data/mpv/console/open') is not True, 'the password must not go through the mpv console'
-        # The box is native, but its text comes from the interface in its language.
-        labels = dict(title=window_text(box), note=window_text(user.GetDlgItem(box, 1002)),
-                      ok=window_text(user.GetDlgItem(box, 1)), cancel=window_text(user.GetDlgItem(box, 2)))
-        assert all(labels.values()), labels
-        assert (labels['ok'], labels['cancel']) == (('OK', 'Cancel') if language == 'en' else ('确定', '取消')), labels
-        assert all(text.isascii() for text in labels.values()) == (language == 'en'), labels
-        # The player stays usable behind the open box.
+        # ---- Password prompt with no connection -----------------------------------
+        assert not p.password_prompt() and p.get('user-data/mpv/console/open') is not True
+        prompt = p.open_prompt()['prompt']
+        # The prompt is the mpv console's, in the interface language, and says
+        # that what is typed stays visible.
+        visible = '(visible while typing)' if language == 'en' else '（输入时可见）'
+        assert visible in prompt and str(port) in prompt and prompt.isascii() == (language == 'en'), prompt
+        # The player stays usable while the prompt is open.
         p.seek(10)
         p.play_for(1.2)
         assert p.position() > 10.6, p.position()
         p.seek(10)
-        assert user.IsWindow(box) and p.state()['connection'] == 'disconnected'
-        cancelled = p.finish_box(box, 'escape')
-        assert p.secret()['cancelled'] is True and p.secret()['has_token'] is False
-        closed = p.finish_box(p.open_box(), 'close')
-        assert p.secret()['cancelled'] is True and p.secret()['has_token'] is False
-        note('the box is a masked separate window in the interface language, the player works behind it, Esc and close cancel',
-             language=language, result_after_escape_seconds=cancelled, result_after_close_seconds=closed)
+        assert p.password_prompt() and p.state()['connection'] == 'disconnected'
+        p.finish_prompt('escape', 'typed-then-cancelled')
+        note('the password prompt is the mpv console in the interface language, the player works while it is open, '
+             'Esc cancels without reaching the core', language=language, prompt=prompt)
 
-        first = p.open_box()
+        p.open_prompt()
         p.action('password')
         time.sleep(.5)
-        second = wait_for('a box is open after asking twice', lambda: (p.boxes() or [None])[0])
-        assert len(p.boxes(visible_only=True)) == 1
+        wait_for('a prompt is open after asking twice', p.password_prompt)
         p.action('toggle-enabled')
-        wait_for('disabling splay closes the open box', lambda: not user.IsWindow(first) and not user.IsWindow(second))
+        wait_for('disabling splay closes the open prompt', lambda: not p.password_prompt() and
+                 p.get('user-data/mpv/console/open') is not True)
         wait_for('splay disabled', lambda: p.state().get('enabled') is False)
+        assert p.secret()['count'] == 0, 'no prompt so far has reached the core'
         p.action('toggle-enabled')
         wait_for('splay enabled again', lambda: p.state().get('enabled') is True)
-        note('asking twice leaves one box; disabling splay closes it')
+        note('asking twice leaves one prompt; disabling splay closes it')
 
-        p.finish_box(p.open_box(), 'enter', 'wrong-' + uuid.uuid4().hex)
+        p.open_prompt()
+        p.finish_prompt('enter', 'wrong-' + uuid.uuid4().hex)
         assert p.secret()['has_token'] is True and p.secret()['cancelled'] is False and p.secret()['saved'] is False
         p.action('connect')
-        wait_for('the official server refuses a wrong password from the box', lambda: p.state().get('connection') == 'error')
+        wait_for('the official server refuses a wrong password from the prompt', lambda: p.state().get('connection') == 'error')
         assert p.get('path') == media
-        note('a wrong password from the box is refused by the server', error=p.state().get('error'))
+        note('a wrong password from the prompt is refused by the server', error=p.state().get('error'))
 
         # ---- Reference player: in the room first, paused at 40 ---------------------
         reference = Observer(output, 'plugin')
@@ -408,11 +372,12 @@ def main():
         p.play_for(1.2)
         p.seek(90)
         time.sleep(1.5)
-        delay = p.finish_box(p.open_box(), 'enter', password)
+        p.open_prompt()
+        delay = p.finish_prompt('enter', password)
         assert p.secret()['has_token'] is True and p.secret()['saved'] is False
         assert not (config / 'splay-credentials.json').exists(), 'remember_password=no must not write a credential file'
         p.action('connect')
-        wait_for('joins with the password from the box', lambda: p.state().get('connection') == 'connected')
+        wait_for('joins with the password from the prompt', lambda: p.state().get('connection') == 'connected')
         wait_for('the joining player takes the room position 40', lambda: p.at(40, 1))
         time.sleep(2.5)
         assert room_at(40) and reference.read()['paused'] is True, 'joining must not move or start the room'
@@ -483,15 +448,15 @@ def main():
         assert room_at(30), 'changing the offset must not seek the room'
         note('the offset survives a disconnect and reconnect, and clearing it does not move the room')
 
-        # ---- Quitting with the box open ----------------------------------------------
+        # ---- Quitting with the prompt open -------------------------------------------
         p.action('disconnect')
         wait_for('disconnects before quitting', lambda: p.state().get('connection') == 'disconnected')
-        box = p.open_box()
+        p.open_prompt()
         started = time.perf_counter()
         p.pipe.write(b'{"command":["quit"]}\n')
         p.process.wait(timeout=10)
-        assert not user.IsWindow(box) and p.process.returncode == 0, p.process.returncode
-        note('quitting mpv with the box open closes it and exits cleanly', seconds=round(time.perf_counter() - started, 3))
+        assert p.process.returncode == 0, p.process.returncode
+        note('quitting mpv with the password prompt open exits cleanly', seconds=round(time.perf_counter() - started, 3))
 
         for log in logs:
             log.flush()
@@ -500,7 +465,7 @@ def main():
         assert password not in text and password not in (output / 'reference.log').read_text(encoding='utf-8', errors='replace')
         (output / 'result.json').write_text(json.dumps({'passed': True, 'official_version': '1.7.6', 'findings': findings},
                                                        ensure_ascii=False, indent=2), encoding='utf-8')
-        print('PASS: resting core, offline time offset and password box on a real player:', output, flush=True)
+        print('PASS: resting core, offline time offset and password prompt on a real player:', output, flush=True)
     finally:
         job.close()
         for log in logs:

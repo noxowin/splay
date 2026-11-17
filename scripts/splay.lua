@@ -79,7 +79,7 @@ local EN={
     ['请先输入或选择房间']='Enter or choose a room first',
     ['连接记忆已关闭；未保存连接组合']='Connection history is off; profile not saved',
     ['请先输入或选择房间，再保存连接组合']='Enter or choose a room before saving the profile',
-    ['请先完成或取消 Windows 密码输入，再保存连接组合']='Finish or cancel the Windows password dialog before saving the profile',
+    ['请先完成或取消密码输入，再保存连接组合']='Finish or cancel the password entry before saving the profile',
     ['密码存储错误；未保存连接组合: %s']='Password storage error; profile not saved: %s',
     ['正在读取或保存服务器密码；请等待完成后再次保存连接组合']='Reading or saving the server password; save the profile again when it finishes',
     ['连接记忆正在读取；请稍后再次保存连接组合']='Connection history is loading; save the profile again shortly',
@@ -90,20 +90,17 @@ local EN={
     ['当前无已保存的服务器密码']='No saved server password',
     ['连接组合已保存；%s']='Profile saved; %s',['正在保存连接组合…']='Saving profile…',
     ['请先填写新房间名称，再点击「创建并进入」']='Enter a new room name, then choose "Create and join"',
-    ['完成 Windows 密码输入后连接']='Will connect after the Windows password dialog',
-    ['请先完成或取消 Windows 密码输入']='Finish or cancel the Windows password dialog first',
+    ['完成密码输入后连接']='Will connect after the password is entered',
+    ['请先完成或取消密码输入']='Finish or cancel the password entry first',
     ['请先输入或选择房间，再点击「加入」']='Enter or choose a room, then choose "Join"',
     ['密码存储尚未就绪: %s']='Password storage is not ready: %s',
     ['正在读取或保存服务器密码，完成后连接']='Reading or saving the server password; will connect when done',
     ['请先连接']='Connect first',
-    ['splay 服务器密码']='splay server password',['splay 操作员认证']='splay operator authentication',
-    ['splay 创建受控房间']='splay: create controlled room',
-    ['服务器 %s:%s 的密码']='Password for server %s:%s',
-    ['输入操作员密码（例如 AB-123-456）']='Enter the operator password (e.g. AB-123-456)',
-    ['新房间 %s 的操作员密码']='Operator password for new room %s',
-    ['密码由 Windows 输入框接收，不会写入 mpv 输入历史。']='This Windows dialog receives the password; it is not written to mpv input history.',
-    ['确定']='OK',['取消']='Cancel',
-    ['请在 Windows 密码框输入；不会写入 mpv 输入历史']='Enter it in the Windows password dialog; it is not written to mpv input history',
+    ['服务器 %s:%s 的密码（输入时可见）']='Password for server %s:%s (visible while typing)',
+    ['操作员密码，例如 AB-123-456（输入时可见）']='Operator password, e.g. AB-123-456 (visible while typing)',
+    ['新房间 %s 的操作员密码（输入时可见）']='Operator password for new room %s (visible while typing)',
+    ['密码在 mpv 输入框中明文显示；Enter 提交，Esc 取消']='The password is shown in clear text in the mpv input box; Enter submits, Esc cancels',
+    ['取消']='Cancel',
     ['未连接']='Disconnected',['连接中']='Connecting',['已连接']='Connected',['等待重连']='Waiting to reconnect',['错误']='Error',
     -- Core warnings: Chinese mode maps them, English shows the core's own text.
     ['等待媒体；同步已暂停']='Waiting for media; synchronization is suspended',
@@ -111,7 +108,7 @@ local EN={
     ['媒体不可跳转；无法同步播放位置']='Media is not seekable; position synchronization is unavailable',
     ['自动重连 %s 秒 · 第 %s/5 次']='Reconnecting in %s s · attempt %s/5',
     ['自动重连 · 第 %s/5 次']='Reconnecting · attempt %s/5',['自动重连: %s']='Auto reconnect: %s',
-    ['Windows 输入中']='Entering in Windows',['存储错误（请重新输入）']='Storage error (enter again)',
+    ['输入中']='Being entered',['存储错误（请重新输入）']='Storage error (enter again)',
     ['读取 / 保存中']='Reading / saving',['已加密保存']='Saved, encrypted',['已保存（当前不使用）']='Saved (not in use)',
     ['仅本次']='This session only',['空（无密码）']='None',
     ['已关闭']='Off',['等待全员准备']='Waiting for everyone to be ready',['至少需要两位同房成员']='Needs at least two members in the room',
@@ -199,7 +196,7 @@ local EN={
     ['房间、成员或媒体已变化，旧时长差已失效，请重新选择']='Room, member or media changed; the old duration difference is no longer valid, choose again',
     ['请输入带可选正负号的十进制秒数，例如 +12.5 或 -3']='Enter decimal seconds with an optional sign, e.g. +12.5 or -3',
     ['新普通房间名称']='New room name',
-    ['如需加密保存本次密码，请重新打开 Windows 密码框输入']='To save this password encrypted, enter it again in the Windows password dialog',
+    ['如需加密保存本次密码，请重新输入密码']='To save this password encrypted, enter it again',
     ['管理连接组合']='Manage connection profiles',['%s建议: %s']='%s suggestions: %s',
     ['选择要清空的字段建议；组合、上次填写、密码保留']='Choose a field to clear; profiles, the last form and passwords are kept',
     ['只清空%s建议；保留组合、上次填写、密码']='Clear only %s suggestions; profiles, the last form and passwords are kept',
@@ -209,7 +206,7 @@ local EN={
     ['连接历史已清空；聊天、暂停和语言偏好及单独保存的密码保留']='Connection history cleared; chat, pause and language preferences and saved passwords are kept',
     ['新受控房间']='New controlled room',
     ['splay 偏好 / 历史: %s']='splay preferences / history: %s',['splay 历史: %s']='splay history: %s',
-    ['连接失败: %s']='Connection failed: %s',['Windows 密码输入: %s']='Windows password dialog: %s',
+    ['连接失败: %s']='Connection failed: %s',['密码输入: %s']='Password entry: %s',
     ['服务器密码已加密保存']='Server password saved, encrypted',['服务器密码仅保留于本次进程']='Server password kept for this session only',
     ['操作员请求已发送']='Operator request sent',
     ['%s 跳转']='%s seeked',['%s 暂停']='%s paused',['%s 播放']='%s resumed',['连接: %s']='Connection: %s',
@@ -403,8 +400,13 @@ local function credential_reset()
     credential_pending=nil;credential_request=nil;credential_connect_waiting=false
 end
 local function cancel_secret()
-    if secret_request then send({action='secret-cancel',request_id=secret_request.id}) end
+    local request=secret_request
     secret_request=nil
+    -- A prompt still waiting for the password is closed too, so nothing is
+    -- typed into a box whose answer would be dropped.
+    if request and not request.submitted and input_open and request.generation==input_generation then
+        input_generation=input_generation+1;input.terminate()
+    end
 end
 local function credential_dispatch()
     if not credential_initialized then if init_credentials then init_credentials() end;return end
@@ -491,7 +493,7 @@ end
 local function save_profile()
     if not cfg.history_enabled then report(T('连接记忆已关闭；未保存连接组合'),4);return end
     if not room_valid(cfg.room) then report(T('请先输入或选择房间，再保存连接组合'),4);return end
-    if secret_request then report(T('请先完成或取消 Windows 密码输入，再保存连接组合'),4);return end
+    if secret_request then report(T('请先完成或取消密码输入，再保存连接组合'),4);return end
     if cfg.remember_password then
         if credential_error then report(T('密码存储错误；未保存连接组合: %s'):format(plain(credential_error)),5,'error');return end
         if not credential_initialized or not credential_ready or credential_pending or credential_request then
@@ -522,8 +524,8 @@ connect=function()
         mp.add_timeout(0,function() act('room') end);return
     end
     if secret_request then
-        if secret_request.purpose=='server' then credential_connect_waiting=true;report(T('完成 Windows 密码输入后连接'),3)
-        else report(T('请先完成或取消 Windows 密码输入'),3) end
+        if secret_request.purpose=='server' then credential_connect_waiting=true;report(T('完成密码输入后连接'),3)
+        else report(T('请先完成或取消密码输入'),3) end
         return
     end
     if not room_valid(cfg.room) then
@@ -619,27 +621,54 @@ local function select(title,items,callback)
         end,closed=closed})
     end)
 end
+-- Passwords are typed into mpv's own input box, in clear text, and passed to
+-- the core in a single command; the prompt says so. Each prompt gets an id of
+-- its own and no history_path, so the console never offers a password again
+-- with Up and never writes one to disk.
 local function secret_input(purpose,room)
     if not enabled then return end
-    if close_console then close_console() end
     if purpose~='server' and state.connection~='connected' then report(T('请先连接'),3);return end
     close_menu()
-    input_generation=input_generation+1
-    if input_open then input.terminate() end
     cancel_secret()
     if purpose=='server' then
         password_token=nil;credential_request=nil;credential_pending=nil;credential_connect_waiting=false
     end
     secret_serial=secret_serial+1
-    secret_request={id=secret_serial,purpose=purpose,epoch=ui_epoch,host=endpoint_host(cfg.host),port=tonumber(cfg.port)}
-    local titles={server=T('splay 服务器密码'),operator=T('splay 操作员认证'),create_room=T('splay 创建受控房间')}
-    local prompts={server=T('服务器 %s:%s 的密码'):format(plain(cfg.host,100),plain(cfg.port)),
-        operator=T('输入操作员密码（例如 AB-123-456）'),create_room=T('新房间 %s 的操作员密码'):format(plain(room,100))}
-    -- The dialog's fixed labels are plain text; the adapter keeps Chinese defaults for older scripts.
-    send({action='secret-input',request_id=secret_serial,purpose=purpose,host=cfg.host,port=tonumber(cfg.port),
-        remember_password=cfg.remember_password,room=room,title=titles[purpose],prompt=prompts[purpose],
-        note=T('密码由 Windows 输入框接收，不会写入 mpv 输入历史。'),ok=T('确定'),cancel=T('取消')})
-    report(T('请在 Windows 密码框输入；不会写入 mpv 输入历史'),3)
+    local request={id=secret_serial,purpose=purpose,epoch=ui_epoch,host=endpoint_host(cfg.host),port=tonumber(cfg.port),
+        room=purpose=='create_room' and room or state.room}
+    secret_request=request
+    local prompts={server=T('服务器 %s:%s 的密码（输入时可见）'):format(plain(cfg.host,100),plain(cfg.port)),
+        operator=T('操作员密码，例如 AB-123-456（输入时可见）'),
+        create_room=T('新房间 %s 的操作员密码（输入时可见）'):format(plain(room,100))}
+    local host,port,remember,joined_room=cfg.host,tonumber(cfg.port),cfg.remember_password,state.room
+    request_input(function(closed,_,generation)
+        if secret_request~=request then closed();return end
+        request.generation=generation
+        input.get({prompt=prompts[purpose]..': ',default_text='',id='splay-secret-'..request.id,
+            closed=function()
+                closed()
+                -- mpv sends submit before closed; a close with nothing
+                -- submitted is a cancel.
+                if secret_request==request and not request.submitted then
+                    secret_request=nil
+                    if purpose=='server' then credential_connect_waiting=false end
+                    update_enter();publish()
+                end
+            end,
+            submit=function(value)
+                if secret_request~=request or request.submitted then return end
+                if not enabled or request.epoch~=ui_epoch or generation~=input_generation or
+                    (purpose~='server' and (state.connection~='connected' or state.room~=joined_room)) then
+                    secret_request=nil;credential_connect_waiting=false;update_enter();publish();return
+                end
+                request.submitted=true
+                -- The value is not kept: it goes to the core in this one
+                -- command and the core answers with splay-secret.
+                send({action='secret-submit',request_id=request.id,purpose=purpose,host=host,port=port,
+                    remember_password=remember,room=request.room,password=type(value)=='string' and value or ''})
+            end})
+    end)
+    report(T('密码在 mpv 输入框中明文显示；Enter 提交，Esc 取消'),3)
     update_enter()
 end
 local connection_labels={disconnected=N_('未连接'),connecting=N_('连接中'),connected=N_('已连接'),reconnecting=N_('等待重连'),error=N_('错误')}
@@ -664,7 +693,7 @@ end
 local function core_warning(text) return label_of(warning_labels,text) or text end
 local function warning_label() return plain(core_warning(state.warning)) end
 local function password_label()
-    if secret_request and secret_request.purpose=='server' then return T('Windows 输入中') end
+    if secret_request and secret_request.purpose=='server' then return T('输入中') end
     if credential_error then return T('存储错误（请重新输入）') end
     if not credential_initialized or not credential_ready or credential_pending or credential_request then return T('读取 / 保存中') end
     if credential_saved then return cfg.remember_password and T('已加密保存') or T('已保存（当前不使用）') end
@@ -1331,7 +1360,7 @@ act=function(action)
         credential_connect_waiting=false
         cancel_secret()
         if cfg.remember_password and has_private_password and not credential_saved then
-            report(T('如需加密保存本次密码，请重新打开 Windows 密码框输入'),4)
+            report(T('如需加密保存本次密码，请重新输入密码'),4)
         end
     elseif action=='playlist' then
         close_console();close_menu();mp.commandv('script-message-to','splay_playlist','splay-playlist-open',current_ui)
@@ -1516,7 +1545,7 @@ mp.register_script_message('splay-secret',function(json)
     if request.purpose=='server' and (request.host~=endpoint_host(cfg.host) or request.port~=tonumber(cfg.port)) then update_enter();return end
     if value.error then
         if request.purpose=='server' then credential_error=value.error;credential_ready=false end
-        report(T('Windows 密码输入: %s'):format(plain(value.error)),5,'error')
+        report(T('密码输入: %s'):format(plain(value.error)),5,'error')
     elseif not value.cancelled then
         if request.purpose=='server' then
             if type(value.token)=='string' and value.token~='' then
@@ -1649,8 +1678,8 @@ mp.register_script_message('splay-command',function(json)
         credential_reset()
         cancel_secret();password_token=nil;has_private_password=false
         for _,key in ipairs(fields) do if value[key]~=nil then cfg[key]=value[key];touched[key]=true end end
-        -- Preserve explicit IPC automation commands. Interactive passwords use
-        -- only the native dialog and never enter mp.input or display state.
+        -- Preserve explicit IPC automation commands. Interactive passwords are
+        -- typed into their own mp.input prompt and never enter display state.
         if value.auto_reconnect==nil then value.auto_reconnect=cfg.auto_reconnect
         elseif type(value.auto_reconnect)=='boolean' then cfg.auto_reconnect=value.auto_reconnect end
         credential_status()

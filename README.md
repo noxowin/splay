@@ -19,7 +19,7 @@ splay is an independent project, not an official mpv or Syncplay distribution. I
 - Switch between room chat and scrolling chat; remember the selected mode. Optional smoother scrolling is off by default.
 - Compare exact reported durations and adjust a local time offset, including an editable suggestion from another member's duration.
 - Share playlists, match local files and explicitly confirm network addresses; local following starts off.
-- Named connection profiles, masked password entry, Windows-encrypted password memory and bounded reconnect attempts.
+- Named connection profiles, password entry in the mpv input box (visible while typed), Windows-encrypted password memory and bounded reconnect attempts.
 - Interface in Simplified Chinese or English, following the Windows display language or chosen in Settings.
 - Independent mpv interface with optional uosc integration. Each player starts with splay disabled and connects only when requested.
 

@@ -67,14 +67,6 @@ def background_window(minimized=False):
     return info
 
 
-def send_behind(hwnd):
-    """Put a window the test only talks to through messages behind every other
-    window, without activating it, so it does not sit on top of the user's work."""
-    user = ctypes.WinDLL('user32', use_last_error=True)
-    user.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
-    user.SetWindowPos(hwnd, wintypes.HWND(1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # HWND_BOTTOM; NOSIZE, NOMOVE, NOACTIVATE
-
-
 def wait_for(description, predicate, seconds=15):
     until = time.monotonic() + seconds
     last = None
