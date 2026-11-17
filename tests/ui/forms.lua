@@ -242,6 +242,7 @@ local events={
     {type='ready',username='joiner',ready=true},
     {type='playlist',action='files',user='joiner',files={'one','two'}},
     {type='playback',username='joiner',paused=false,position=65,seek=true},
+    {type='catchup',action='slow',username='joiner'},{type='catchup',action='normal'},
 }
 for index,event in ipairs(events) do event.schema=1;event.id=400+index;handlers['splay-event'](utils.format_json(event)) end
 handlers['splay-notice'](utils.format_json({text='列表操作已发送',category='playlist'}))
@@ -249,6 +250,7 @@ state({warning='Waiting for media; synchronization is suspended',error='Example 
 state({warning='Waiting for media; synchronization is suspended',error='Example server error'})
 act('message-history');assert(label('连接: 连接中') and label('切换房间: another-room') and label('joiner 加入房间'))
 assert(label('joiner 已准备') and label('更新共享播放列表: 2 项') and label('跳转 · 65 秒') and label('列表操作已发送'))
+assert(label('与 joiner 有时间差，暂时减速追赶') and label('已追上房间进度，恢复正常速度'),'catch-up events are recorded')
 local _,warning_count=console_text():gsub('等待媒体','')
 assert(warning_count==1,'state warning transitions append once');dismiss()
 act('playlist');local playlist_open=false
@@ -476,7 +478,16 @@ dismiss()
 -- Latency display/sharing defaults on; show valid fresh values only.
 start();assert(count('latency')==0,'fresh disabled UI must not enable latency sharing')
 act('toggle-enabled');assert(last('latency').enabled==true)
-act('settings');assert(label('延迟显示与共享: 开启'));dismiss()
+assert(last('catchup').enabled==true,'enabling splay applies the smooth catch-up default')
+act('settings');assert(label('延迟显示与共享: 开启') and label('平滑追赶: 开启'));dismiss()
+act('toggle-catchup');assert(last('catchup').enabled==false)
+act('settings');assert(label('平滑追赶: 关闭'));dismiss()
+act('toggle-catchup');assert(last('catchup').enabled==true)
+start({smooth_catchup=false});act('toggle-enabled')
+assert(last('catchup').enabled==false,'splay.conf smooth_catchup=no reaches the core on enable')
+handlers['splay-command'](utils.format_json({action='catchup',enabled=true}))
+act('settings');assert(label('平滑追赶: 开启'),'automation keeps the menu in step');dismiss()
+start();act('toggle-enabled')
 state({username='self',members={
     {username='self',room='active-room',ready=false},
     {username='peer',room='active-room'},
@@ -806,7 +817,7 @@ assert(display_state().settings.language=='en' and sent_state('splay_playlist').
 act('settings');assert(selected.prompt=='Settings | Disconnected')
 assert(label('语言 / Language: English') and label('Message history: 0') and label('Show status: On') and label('Chat mode: Room chat'))
 assert(label('All-ready autostart: On (5 s)') and label('Auto reconnect: On') and label('Pause room when a member joins: On'))
-assert(label('Connection history: 0') and label('Disable splay'));dismiss()
+assert(label('Connection history: 0') and label('Disable splay') and label('Smooth catch-up: On'));dismiss()
 act('join-form');assert(selected.prompt=='Join room | Disconnected')
 assert(label('‹ Back') and label('Server: syncplay.pl : 8999') and label('Room: Enter or choose one') and
     label('Server password: None') and label('Nickname: splayuser') and label('Connection profiles: 0') and label('Join'));dismiss()

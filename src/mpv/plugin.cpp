@@ -8,6 +8,7 @@
 #include "../net/transport.hpp"
 #include <windows.h>
 #include <bcrypt.h>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -126,7 +127,36 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
             const char* args[]={"script-message-to","splay","splay-event",payload.c_str(),nullptr};
             mpv_command(h,args);
         };
+        // mpv writes watch-later files before any hook or shutdown event runs,
+        // and speed is in the default watch-later-options. While splay holds
+        // the player below 1x, speed is left out of them, so quitting cannot
+        // make the next playback of the file start slowed down. It goes back
+        // in as soon as no catch-up is running, whoever ended it.
+        bool speed_unlisted=false;
+        auto lists_speed=[&](){
+            const auto list=get_text(h,"watch-later-options");
+            for(size_t at=0;at<=list.size();){
+                const auto end=std::min(list.find(',',at),list.size());
+                if(list.compare(at,end-at,"speed")==0)return true;
+                at=end+1;
+            }
+            return false;
+        };
+        auto relist_speed=[&](){
+            if(!speed_unlisted||session.catching_up())return;
+            const char* args[]={"change-list","watch-later-options","append","speed",nullptr};
+            mpv_command(h,args);
+            speed_unlisted=false;
+        };
         session.apply=[&](const splay::Correction& c){
+            if(c.speed&&std::abs(get_number(h,"speed",1)-c.speed_from)<.001){
+                if(*c.speed!=1&&!speed_unlisted&&lists_speed()){
+                    const char* args[]={"change-list","watch-later-options","remove","speed",nullptr};
+                    speed_unlisted=mpv_command(h,args)>=0;
+                }
+                double s=*c.speed;
+                mpv_set_property(h,"speed",MPV_FORMAT_DOUBLE,&s);
+            }
             // Pause before a boundary seek; resume only after restoring a
             // valid position, so an old endpoint cannot race into EOF.
             if(c.paused&&*c.paused){
@@ -450,6 +480,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
             }
             const auto remaining=reconnect.remaining(now);
             if(remaining!=last_remaining){last_remaining=remaining;publish();}
+            relist_speed();
             }
             catch(const std::exception& exception){
                 // A failure outside command handling must not end this thread:

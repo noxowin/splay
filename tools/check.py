@@ -1,7 +1,7 @@
 """Reproducible native checks. Python/compiler are development dependencies.
 
 The synchronization core suites (core, reconnect, latency, autostart,
-room-policy) are portable C++ and also run on Linux; the others use Windows APIs.
+room-policy, catchup) are portable C++ and also run on Linux; the others use Windows APIs.
 The lua suite only parses the scripts and runs wherever LuaJIT or luac is installed.
 The i18n suite statically checks interface translation coverage and needs only Python.
 """
@@ -14,7 +14,7 @@ import sys
 from build import ROOT, default_compiler
 
 parser = argparse.ArgumentParser()
-parser.add_argument('suite', choices=['core', 'reconnect', 'latency', 'autostart', 'room-policy', 'history', 'credentials', 'net', 'ui', 'ui-review', 'ui-history', 'tls-rejection', 'lua', 'i18n'])
+parser.add_argument('suite', choices=['core', 'reconnect', 'latency', 'autostart', 'room-policy', 'catchup', 'history', 'credentials', 'net', 'ui', 'ui-review', 'ui-history', 'tls-rejection', 'lua', 'i18n'])
 parser.add_argument('--compiler', default=default_compiler())
 parser.add_argument('--sanitize', action='store_true',
                     help='Build the portable core suites with AddressSanitizer and UndefinedBehaviorSanitizer (not MinGW)')
@@ -23,7 +23,7 @@ args = parser.parse_args()
 
 WINDOWS = os.name == 'nt'
 CORE_SUITES = {'core':'session_test.cpp','reconnect':'reconnect_test.cpp','latency':'latency_test.cpp',
-               'autostart':'autostart_test.cpp','room-policy':'room_policy_test.cpp'}
+               'autostart':'autostart_test.cpp','room-policy':'room_policy_test.cpp','catchup':'catchup_test.cpp'}
 if args.suite == 'lua':
     # Parse only: a syntax error is caught here instead of when a player loads
     # the script. mpv's Windows builds use LuaJIT, so prefer it.
@@ -66,7 +66,7 @@ elif args.suite == 'history':
          '-DWIN32_LEAN_AND_MEAN', '-DNOMINMAX', '-I'+str(ROOT/'src'), '-I'+str(ROOT/'third_party'),
          ROOT/'tests/history/driver.cpp', ROOT/'src/core/history.cpp', '-o', output])
     run([sys.executable,ROOT/'tests/history/test_history.py',output])
-elif args.suite in ('core', 'reconnect', 'latency', 'autostart', 'room-policy', 'net', 'tls-rejection'):
+elif args.suite in (*CORE_SUITES, 'net', 'tls-rejection'):
     target = 'core' if args.suite in CORE_SUITES else 'net'
     case = CORE_SUITES.get(args.suite)
     output = ROOT / '.local' / (Path(case).stem+('.exe' if WINDOWS else '') if case else 'transport-test.exe')

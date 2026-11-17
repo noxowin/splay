@@ -15,7 +15,7 @@ import subprocess
 import time
 import uuid
 
-from interop import Job, Player as ObserverPlayer, ROOT, wait_for
+from interop import Job, start_official, Player as ObserverPlayer, ROOT, wait_for
 
 
 class Player(ObserverPlayer):
@@ -150,12 +150,12 @@ def main():
                 return probe.connect_ex(('127.0.0.1', port)) == 0
 
         wait_for('unmodified official 1.7.6 server listens only on loopback', listening)
-        cli = launch('official', [args.python, args.upstream / 'syncplayClient.py', '--no-gui',
+        cli = start_official(lambda: launch('official', [args.python, args.upstream / 'syncplayClient.py', '--no-gui',
             '--no-store', '--language', 'en', '--host', '127.0.0.1:' + str(port),
             '--password', password, '--name', 'official', '--room', room,
             '--player-path', args.mpv, args.media, '--', '--vo=null', '--ao=null',
-            '--pause=yes', '--no-config', '--scripts-append=' + str(official.script)], stdin=True)
-        wait_for('unmodified official client owns real loaded mpv', lambda: official.read().get('duration', 0) > 100)
+            '--pause=yes', '--no-config', '--scripts-append=' + str(official.script)], stdin=True),
+                             official, output / 'official.log', 'unmodified official client owns real loaded mpv')
         wait_for('official client completes its delayed initial file announcement', lambda:
                  "official is playing '" in (output / 'official.log').read_text(encoding='utf-8', errors='replace'))
         # Upstream starts mpv first and applies its initial room state later.

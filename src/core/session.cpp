@@ -37,6 +37,11 @@ namespace splay {
             std::string& value;
             ~SecretGuard(){wipe(value);}
         };
+        // Smooth catch-up, after the official 1.7.6 client (constants.py). The
+        // server's room clock follows its slowest watcher, so a player ahead of
+        // it slows down and lets it catch up; nobody has to speed up. Only a
+        // larger lead is rewound. Being behind is handled as before.
+        constexpr double CatchupStart=1.5, CatchupDone=.1, CatchupRate=.95, CatchupRewind=4, BehindSeek=1.5;
         std::string str(const Json& j,const char* key,size_t max=256) {
             auto i=j.find(key);
             if(i==j.end()||!i->is_string())throw std::runtime_error("Invalid text field");
@@ -173,6 +178,7 @@ namespace splay {
         roomPauseForJoin_=roomPauseForLeave_=false;
         roomPolicyBaseline_=false;
         reset_latency();
+        restore_speed();
     }
     void Session::reset_latency(){
         rttSample_=false;
@@ -215,7 +221,7 @@ namespace splay {
         const bool canPause=!controlled()||(controller_&&autostartAuthenticated_);
         if(!canPause&&!roomPauseAlign_){roomPausePending_=roomPauseForJoin_=roomPauseForLeave_=false;return false;}
         if(roomPauseAlign_&&local_.loaded&&
-           (local_.buffering||!local_.seekable||!std::isfinite(local_.speed)||std::abs(local_.speed-1)>=.001))return false;
+           (local_.buffering||!local_.seekable||!normal_speed()))return false;
         const double position=std::max(0.0,room_position());
         const bool align=roomPauseAlign_&&local_.loaded;
         const bool paused=canPause?true:roomPaused_;
@@ -257,7 +263,7 @@ namespace splay {
         else if(!membersComplete_||!snapshot.contains(user_)||roomJoinPending_||roomPausePending_)reason="waiting-snapshot";
         else if(snapshot.size()<2)reason="waiting-members";
         else if(!allReady)reason="waiting-ready";
-        else if(!local_.loaded||!local_.paused||local_.buffering||!local_.seekable||offsetBoundaryHold_||!std::isfinite(local_.speed)||std::abs(local_.speed-1)>=.001)reason="waiting-media";
+        else if(!local_.loaded||!local_.paused||local_.buffering||!local_.seekable||offsetBoundaryHold_||!normal_speed())reason="waiting-media";
         if(autostartPending_&&!reason.empty())cancel_autostart(reason);
         if(autostartEnabled_&&autostartBlocked_&&membersComplete_){
             // Only explicit readiness (false/unknown), with a complete room,
@@ -296,18 +302,23 @@ namespace splay {
         if(before!=Json::array({autostartPending_,autostartRemaining_,autostartReason_}))notify();
     }
     void Session::playback(const Playback& value){
-        const bool status_changed=local_.loaded!=value.loaded||local_.buffering!=value.buffering||local_.seekable!=value.seekable||
-            (std::abs(local_.speed-1)<.001)!=(std::abs(value.speed-1)<.001);
+        const bool was_normal=normal_speed();
+        // Any other speed on a loaded player was chosen by the user: the
+        // catch-up ends without restoring anything, and synchronization waits
+        // for 1.0 as before. An unloaded sample carries no real speed.
+        if(catchupRate_>0&&value.loaded&&std::abs(value.speed-catchupRate_)>=.001)catchupRate_=0;
+        const bool status_changed=local_.loaded!=value.loaded||local_.buffering!=value.buffering||local_.seekable!=value.seekable;
         const auto name=value.loaded?public_media_name(value.public_name):std::string();
         const bool title_changed=local_.loaded&&value.loaded&&local_.public_name!=name;
         local_=value;
         local_.public_name=name;
+        const bool speed_changed=was_normal!=normal_speed();
         // A late title is a metadata update, not a new playback session. Do
         // not reset seek correction, readiness or the local countdown here.
         if(title_changed&&logged_)file(false);
         update_room_policy();
         update_autostart();
-        if(status_changed)notify();
+        if(status_changed||speed_changed)notify();
     }
     void Session::clear_playlist(){
         playlist_={{"files",Json::array()},{"index",nullptr},{"user",""}};
@@ -424,7 +435,7 @@ namespace splay {
         std::string warning;
         if(logged_){
             if(!local_.loaded)warning="Waiting for media; synchronization is suspended";
-            else if(std::abs(local_.speed-1)>.001)warning="Synchronization requires playback speed 1.0; synchronization is suspended";
+            else if(!normal_speed())warning="Synchronization requires playback speed 1.0; synchronization is suspended";
             else if(!local_.seekable)warning="Media is not seekable; position synchronization is unavailable";
         }
         Json members=Json::array();
@@ -448,6 +459,7 @@ namespace splay {
             ,{"warning",warning}
             ,{"time_offset",timeOffset_}
             ,{"time_offset_boundary",offsetBoundaryHold_}
+            ,{"catchup",{{"enabled",catchupEnabled_},{"active",catchupRate_>0}}}
             ,{"room_policy",{{"pause_on_leave",pauseOnLeave_},{"pause_on_join",pauseOnJoin_}}}
             ,{"members",members}
             ,{"autostart",{{"enabled",autostartEnabled_},{"delay",autostartDelay_},{"pending",autostartPending_},
@@ -528,6 +540,8 @@ namespace splay {
         }
     }
     void Session::media_changed(){
+        // mpv keeps its speed across files; the next one starts at 1x.
+        restore_speed();
         timeOffset_=0;
         offsetBoundaryHold_=false;
         haveRoomPosition_=false;
@@ -844,18 +858,54 @@ namespace splay {
         return target<0||(std::isfinite(local_.duration)&&local_.duration>0&&
             target>=local_.duration-std::min(.25,local_.duration/2));
     }
-    void Session::follow_room_position(double position,bool paused,bool force_seek){
+    bool Session::normal_speed() const {
+        if(!std::isfinite(local_.speed))return false;
+        return std::abs(local_.speed-1)<.001||(catchupRate_>0&&std::abs(local_.speed-catchupRate_)<.001);
+    }
+    void Session::stop_catchup(Correction& correction){
+        if(catchupRate_<=0)return;
+        correction.speed=1.0;
+        correction.speed_from=catchupRate_;
+        if(std::abs(local_.speed-catchupRate_)<.001)local_.speed=1;
+        catchupRate_=0;
+    }
+    void Session::restore_speed(){
+        Correction correction;
+        stop_catchup(correction);
+        if(correction.speed&&apply)apply(correction);
+    }
+    void Session::follow_room_position(double position,bool paused,bool force_seek,const std::string& setter){
         const bool boundary=offset_outside(position);
         const bool boundary_changed=boundary!=offsetBoundaryHold_;
         const double target=local_position(position);
         Correction correction;
         const bool local_paused=boundary||paused;
         if(local_.paused!=local_paused){correction.paused=local_paused;local_.paused=local_paused;}
-        if(local_.seekable&&(force_seek||first_||boundary_changed||std::abs(local_.position-target)>1.5)){
+        // Positive while this player is ahead of the room.
+        const double drift=local_.position-target;
+        // A paused room, a held boundary or a live stream is aligned by
+        // seeking only, as before.
+        const bool smooth=catchupEnabled_&&local_.seekable&&!local_paused;
+        bool seek=force_seek||first_||boundary_changed,caught_up=false;
+        if(!seek){
+            if(!smooth)seek=std::abs(drift)>1.5;
+            else if(drift>CatchupRewind||drift<-BehindSeek)seek=true;
+            else if(catchupRate_<=0&&drift>CatchupStart&&setter!=user_){
+                correction.speed=CatchupRate;
+                correction.speed_from=1;
+                catchupRate_=CatchupRate;
+                local_.speed=CatchupRate;
+                publish_event({{"type","catchup"},{"action","slow"},{"username",setter}});
+            }
+            else if(catchupRate_>0&&drift<CatchupDone)caught_up=true;
+        }
+        if(seek||!smooth||caught_up)stop_catchup(correction);
+        if(caught_up&&correction.speed)publish_event({{"type","catchup"},{"action","normal"}});
+        if(local_.seekable&&seek){
             correction.position=target;local_.position=target;
         }
         offsetBoundaryHold_=boundary;
-        if((correction.position||correction.paused)&&apply)apply(correction);
+        if((correction.position||correction.paused||correction.speed)&&apply)apply(correction);
         first_=false;
         if(boundary_changed)notify();
     }
@@ -878,7 +928,7 @@ namespace splay {
         // authoritative room clock/pause while locally held instead.
         const double target=haveRoomPosition_?room_position()+timeOffset_:local_.position;
         const bool outside=offsetBoundaryHold_||(haveRoomPosition_&&offset_outside(room_position()))||target<0;
-        if(!roomJoinPending_&&!roomPausePending_&&local_.loaded&&!local_.buffering&&std::abs(local_.speed-1)<.001&&(change||!clientIgnore_||serverIgnore_)){
+        if(!roomJoinPending_&&!roomPausePending_&&local_.loaded&&!local_.buffering&&normal_speed()&&(change||!clientIgnore_||serverIgnore_)){
             if(!change&&timeOffset_&&outside){
                 if(haveRoomState_)s["playstate"]={{"position",std::max(0.0,room_position())},{"paused",roomPaused_}};
             }
@@ -948,8 +998,8 @@ namespace splay {
                     haveRoomPosition_=true;
                     haveRoomState_=true;
                 }
-                if(std::isfinite(pos)&&!roomJoinPending_&&!roomPausePending_&&local_.loaded&&!local_.buffering&&std::abs(local_.speed-1)<.001){
-                    follow_room_position(pos,paused,flag(p,"doSeek"));
+                if(std::isfinite(pos)&&!roomJoinPending_&&!roomPausePending_&&local_.loaded&&!local_.buffering&&normal_speed()){
+                    follow_room_position(pos,paused,flag(p,"doSeek"),p.contains("setBy")&&p["setBy"].is_string()?p["setBy"].get<std::string>():std::string());
                 }
             }
         }
@@ -984,6 +1034,9 @@ namespace splay {
         // An explicit later gesture supersedes a deferred membership pause.
         // Recovery from buffering itself does not call this gesture path.
         roomPausePending_=roomPauseAlign_=roomPauseForJoin_=roomPauseForLeave_=false;
+        // The user moved or paused the player: its relation to the room clock
+        // starts afresh at normal speed.
+        restore_speed();
         if(offsetBoundaryHold_&&!seek){
             cancel_autostart("waiting-reset");
             if(local_.loaded&&haveRoomPosition_)follow_room_position(room_position(),roomPaused_);
@@ -1001,7 +1054,7 @@ namespace splay {
             readyRequested_=true;
             emit({{"Set",{{"ready",{{"isReady",true},{"manuallyInitiated",true}}}}}});
         }
-        if(logged_&&!roomJoinPending_&&!roomPausePending_&&local_.loaded&&!local_.buffering&&std::abs(local_.speed-1)<.001&&(!controlled()||controller_))reply(Json::object(),true,seek);
+        if(logged_&&!roomJoinPending_&&!roomPausePending_&&local_.loaded&&!local_.buffering&&normal_speed()&&(!controlled()||controller_))reply(Json::object(),true,seek);
     }
     void Session::tick(double now){
         const auto previous=latency(user_);
@@ -1012,7 +1065,7 @@ namespace splay {
         if(logged_&&latencyEnabled_&&local_.loaded&&rttSample_&&
            ((!latencyPublished_&&now_-rttReceived_<30)||(latencyPublished_&&now_-lastLatencyShare_>=10)))file(false);
         if(timeOffset_&&haveRoomPosition_&&!roomJoinPending_&&!roomPausePending_&&local_.loaded&&
-           !local_.buffering&&std::abs(local_.speed-1)<.001&&(offsetBoundaryHold_||offset_outside(room_position())))
+           !local_.buffering&&normal_speed()&&(offsetBoundaryHold_||offset_outside(room_position())))
             follow_room_position(room_position(),roomPaused_);
         update_autostart(true);
         if(expired||previous!=latency(user_))notify();
@@ -1036,6 +1089,7 @@ namespace splay {
             const double offset=c["seconds"].get<double>();
             if(!std::isfinite(offset)||std::abs(offset)>86400)throw std::runtime_error("Time offset must be a number from -86400 to 86400 seconds");
             if(offset!=timeOffset_){
+                restore_speed();
                 // While idle() the adapter does not watch the player, so a
                 // reference kept from an earlier offset or connection may be
                 // older than a seek made since. Start from where the player is.
@@ -1076,6 +1130,13 @@ namespace splay {
             cancel_autostart("waiting-reset");
             update_autostart();
             notify();return;
+        }
+        if(a=="catchup"){
+            if(!c.contains("enabled")||!c["enabled"].is_boolean())throw std::runtime_error("Invalid catch-up preference");
+            catchupEnabled_=c["enabled"].get<bool>();
+            if(!catchupEnabled_)restore_speed();
+            notify();
+            return;
         }
         if(a=="latency"){
             if(!c.contains("enabled")||!c["enabled"].is_boolean())throw std::runtime_error("Invalid latency preference");

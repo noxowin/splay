@@ -16,6 +16,10 @@ namespace splay {
     struct Correction {
         std::optional<double> position;
         std::optional<bool> paused;
+        // Set the speed only if the player is still at speed_from: a speed the
+        // user has chosen in the meantime is theirs and is left alone.
+        std::optional<double> speed;
+        double speed_from=1;
     };
     class Session {
         public:
@@ -52,6 +56,10 @@ namespace splay {
         const std::string& connection() const { return connection_; }
         const std::string& error() const { return error_; }
         const std::string& room() const { return room_; }
+        // Playing slightly slower than 1x to let the room catch up.
+        bool catching_up() const { return catchupRate_>0; }
+        // Ends a catch-up and puts the player back to 1x if splay slowed it.
+        void restore_speed();
         // Nothing depends on the clock or on the player's position: neither
         // connected nor connecting, and no local time offset whose media
         // boundary has to be held. Only a command can change that.
@@ -84,6 +92,10 @@ namespace splay {
         // room changes keep the offset; only a media lifecycle change resets it.
         double timeOffset_=0,roomPosition_=0,roomPositionTime_=0;
         bool offsetBoundaryHold_=false;
+        // Smooth catch-up: while ahead of the room by a small amount, play at
+        // catchupRate_ (0 when not catching up) instead of seeking back.
+        bool catchupEnabled_=true;
+        double catchupRate_=0;
         bool haveRoomPosition_=false,haveRoomState_=false,roomPaused_=true;
         bool pauseOnLeave_=true,pauseOnJoin_=true;
         bool roomJoinPending_=true,roomPausePending_=false,roomPauseAlign_=false,emptyRoomState_=false;
@@ -111,7 +123,9 @@ namespace splay {
         double room_position() const;
         double local_position(double room_position) const;
         bool offset_outside(double room_position) const;
-        void follow_room_position(double position,bool paused,bool force_seek=false);
+        void follow_room_position(double position,bool paused,bool force_seek=false,const std::string& setter={});
+        bool normal_speed() const;
+        void stop_catchup(Correction&);
         void set(const Json&);
         void playlist(const Json&,bool index);
         void clear_playlist();
