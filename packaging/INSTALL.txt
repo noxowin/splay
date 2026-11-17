@@ -28,6 +28,8 @@ Join pause requests a room-wide pause; a member leaving the same room also
 requests a pause. Both default on and obey controlled-room permissions.
 All-ready autostart defaults on with a five-second countdown. Use one coordinator
 per room. Server RTT display/sharing also defaults on; peers need reporting support.
+Smooth catch-up defaults on: 1.5 to 4 s ahead of the room plays at 0.95x until
+level instead of jumping back. Turn it off in Settings or with smooth_catchup=no.
 Smoother scrolling chat is optional and off by default; it adds playback load.
 Duration comparison uses exact reported values, not filenames or content hashes.
 Local time offset can be entered or suggested from a member's duration, then

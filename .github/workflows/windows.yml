@@ -100,6 +100,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: python tools/check.py room-policy --compiler "$env:CXX"
 
+      - name: Test smooth catch-up
+        if: ${{ !cancelled() }}
+        run: python tools/check.py catchup --compiler "$env:CXX"
+
       - name: Test encrypted server credentials
         if: ${{ !cancelled() }}
         run: python tools/check.py credentials --compiler "$env:CXX"

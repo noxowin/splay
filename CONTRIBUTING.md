@@ -20,6 +20,7 @@ python tools/check.py reconnect --compiler 'C:\path\to\g++.exe'
 python tools/check.py latency --compiler 'C:\path\to\g++.exe'
 python tools/check.py autostart --compiler 'C:\path\to\g++.exe'
 python tools/check.py room-policy --compiler 'C:\path\to\g++.exe'
+python tools/check.py catchup --compiler 'C:\path\to\g++.exe'
 python tools/check.py history --compiler 'C:\path\to\g++.exe'
 python tools/check.py credentials --compiler 'C:\path\to\g++.exe'
 python tools/check.py net --compiler 'C:\path\to\g++.exe'
@@ -27,7 +28,7 @@ python tools/package.py
 python tools/verify_release.py --archive dist/splay-windows-x64-v0.1.1.zip --require-license
 ```
 
-协议与同步核心（`core`、`reconnect`、`latency`、`autostart`、`room-policy` 五组）不依赖 Windows API，也可在 Linux 的 GCC 下运行；加 `--sanitize` 会启用 AddressSanitizer 与 UndefinedBehaviorSanitizer，MinGW 不支持该选项。其余检查和插件构建仍需 Windows。
+协议与同步核心（`core`、`reconnect`、`latency`、`autostart`、`room-policy`、`catchup` 六组）不依赖 Windows API，也可在 Linux 的 GCC 下运行；加 `--sanitize` 会启用 AddressSanitizer 与 UndefinedBehaviorSanitizer，MinGW 不支持该选项。其余检查和插件构建仍需 Windows。
 
 ```bash
 python3 tools/check.py core --sanitize

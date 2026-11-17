@@ -47,6 +47,9 @@ jobs:
       - name: Test room membership playback policy
         run: python3 tools/check.py room-policy --sanitize
 
+      - name: Test smooth catch-up
+        run: python3 tools/check.py catchup --sanitize
+
       # Static: every interface text key has an English entry. No player needed.
       - name: Check interface translation coverage
         if: ${{ !cancelled() }}

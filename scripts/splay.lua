@@ -5,7 +5,7 @@ local input = require 'mp.input'
 local options = require 'mp.options'
 -- Config supplies first-run defaults; saved preferences restore the last form.
 local cfg = {host='', port=0, username='', room='', tls='', ui='native', history_enabled=true, remember_password=true,
-    auto_reconnect=true,autostart_enabled=true,latency_enabled=true,status_osd=true,button_enabled=true,room_panel=true,chat_mode='room',danmaku_smooth=false,
+    auto_reconnect=true,autostart_enabled=true,latency_enabled=true,smooth_catchup=true,status_osd=true,button_enabled=true,room_panel=true,chat_mode='room',danmaku_smooth=false,
     pause_on_leave=true,pause_on_join=true,language='auto'}
 options.read_options(cfg, 'splay')
 if cfg.chat_mode~='danmaku' then cfg.chat_mode='room' end
@@ -125,7 +125,10 @@ local EN={
     ['取消重连 / 断开连接']='Cancel reconnect / disconnect',
     ['消息记录: %s']='Message history: %s',['Shift+h · 全屏聊天控制台']='Shift+h · full-window chat console',
     ['显示状态: %s']='Show status: %s',['显示按钮: %s']='Show buttons: %s',['显示房间信息: %s']='Show room info: %s',
-    ['延迟显示与共享: %s']='Show and share latency: %s',['聊天显示模式: %s']='Chat mode: %s',
+    ['延迟显示与共享: %s']='Show and share latency: %s',['平滑追赶: %s']='Smooth catch-up: %s',
+    ['领先房间 1.5 至 4 秒时暂时以 0.95 倍速播放，而不是跳回']='When 1.5 to 4 s ahead of the room, play at 0.95x for a while instead of jumping back',
+    ['与 %s 有时间差，暂时减速追赶']='Ahead of %s; slowing down to let the room catch up',
+    ['已追上房间进度，恢复正常速度']='Back in step with the room; normal speed',['聊天显示模式: %s']='Chat mode: %s',
     ['弹幕']='Scrolling',['聊天室']='Room chat',['播放时平滑弹幕: %s']='Smoother scrolling: %s',
     ['提高视频输出帧率，可能增加播放负担；仅弹幕模式生效']='Raises video output frame rate; may add load; scrolling mode only',
     ['全员准备后自动开播: %s']='All-ready autostart: %s',['开启（5 秒）']='On (5 s)',
@@ -830,6 +833,8 @@ local function rows(which)
         {title=T('显示按钮: %s'):format(on_off(cfg.button_enabled)),value='toggle-buttons'},
         {title=T('显示房间信息: %s'):format(on_off(cfg.room_panel)),value='toggle-room-panel'},
         {title=T('延迟显示与共享: %s'):format(on_off(cfg.latency_enabled)),value='toggle-latency'},
+        {title=T('平滑追赶: %s'):format(on_off(cfg.smooth_catchup)),
+            subtitle=T('领先房间 1.5 至 4 秒时暂时以 0.95 倍速播放，而不是跳回'),value='toggle-catchup'},
         {title=T('聊天显示模式: %s'):format(cfg.chat_mode=='danmaku' and T('弹幕') or T('聊天室')),value='toggle-chat-mode'},
         {title=T('播放时平滑弹幕: %s'):format(on_off(cfg.danmaku_smooth)),
             subtitle=T('提高视频输出帧率，可能增加播放负担；仅弹幕模式生效'),value='toggle-danmaku-smooth'},
@@ -1269,7 +1274,8 @@ act=function(action)
         enabled=not enabled
         ui_epoch=ui_epoch+1
         chat_generation=chat_generation+1
-        if enabled then send_room_policy();send({action='latency',enabled=cfg.latency_enabled});send({action='status'})
+        if enabled then send_room_policy();send({action='latency',enabled=cfg.latency_enabled})
+            send({action='catchup',enabled=cfg.smooth_catchup});send({action='status'})
         else
             connection_intent,create_name_confirmed='join',false
             input_generation=input_generation+1
@@ -1343,6 +1349,9 @@ act=function(action)
     elseif action=='toggle-latency' then
         cfg.latency_enabled=not cfg.latency_enabled
         send({action='latency',enabled=cfg.latency_enabled})
+    elseif action=='toggle-catchup' then
+        cfg.smooth_catchup=not cfg.smooth_catchup
+        send({action='catchup',enabled=cfg.smooth_catchup})
     elseif action=='join-room' then
         if state.connection~='connected' then report(T('请先连接'),3)
         elseif not room_valid(cfg.room) then report(T('请先输入或选择房间'),3)
@@ -1571,6 +1580,10 @@ local function event_text(value)
         return T('连接: %s'):format(label_of(connection_labels,value.connection) or plain(value.connection))
     end
     if value.type=='room' then return T('切换房间: %s'):format(plain(value.room)) end
+    if value.type=='catchup' then
+        if value.action=='slow' then return T('与 %s 有时间差，暂时减速追赶'):format(user) end
+        if value.action=='normal' then return T('已追上房间进度，恢复正常速度') end
+    end
     if value.type=='ready' then
         return (value.ready==true and T('%s 已准备') or (value.ready==false and T('%s 未准备') or T('%s 准备状态未知'))):format(user)
     end
@@ -1675,6 +1688,7 @@ mp.register_script_message('splay-command',function(json)
         enabled=true
         send_room_policy()
         send({action='latency',enabled=cfg.latency_enabled})
+        send({action='catchup',enabled=cfg.smooth_catchup})
         credential_reset()
         cancel_secret();password_token=nil;has_private_password=false
         for _,key in ipairs(fields) do if value[key]~=nil then cfg[key]=value[key];touched[key]=true end end
@@ -1686,6 +1700,7 @@ mp.register_script_message('splay-command',function(json)
         save(true,true)
     elseif not enabled and value.action~='status' and value.action~='history-load' and value.action~='history-save' then return
     elseif value.action=='latency' and type(value.enabled)=='boolean' then cfg.latency_enabled=value.enabled
+    elseif value.action=='catchup' and type(value.enabled)=='boolean' then cfg.smooth_catchup=value.enabled
     elseif value.action=='room-policy' then
         for _,key in ipairs({'pause_on_leave','pause_on_join'}) do
             if type(value[key])=='boolean' then cfg[key]=value[key];save_preference(key) end

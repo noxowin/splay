@@ -14,6 +14,7 @@ splay is an independent project, not an official mpv or Syncplay distribution. I
 ## Features
 
 - Sync play, pause and seek with Syncplay servers and official clients; view members, readiness and controlled-room permissions.
+- Smooth catch-up: when 1.5 to 4 s ahead of the room, play at 0.95x until level instead of jumping back.
 - Five-second all-ready countdown and server latency display/sharing, enabled by default after you connect.
 - Quick chat with Enter; transparent, full-window message history with Shift+h, continuous chat input and colored nicknames.
 - Switch between room chat and scrolling chat; remember the selected mode. Optional smoother scrolling is off by default.

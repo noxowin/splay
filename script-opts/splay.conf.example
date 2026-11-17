@@ -11,6 +11,8 @@ remember_password=yes
 auto_reconnect=yes
 # Display and share server RTT after explicitly enabling splay; peers need reporting support.
 latency_enabled=yes
+# When 1.5 to 4 s ahead of the room, play at 0.95x until level instead of jumping back.
+smooth_catchup=yes
 # Apply the five-second all-ready countdown preference after a successful room connection.
 autostart_enabled=yes
 # Pause the whole room on member departure/join (subject to controller permissions).
