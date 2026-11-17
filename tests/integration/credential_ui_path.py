@@ -18,7 +18,7 @@ import subprocess
 import time
 import uuid
 
-from interop import Job, ROOT, wait_for
+from interop import Job, ROOT, background_window, send_behind, wait_for
 
 
 def main():
@@ -53,7 +53,8 @@ def main():
         log = (output / (name + '.log')).open('wb')
         logs.append(log)
         process = subprocess.Popen(list(map(str, command)), cwd=ROOT, env=env, stdout=log,
-                                   stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+                                   stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW,
+                                   startupinfo=background_window())
         job.assign(process)
         processes.append(process)
         return process
@@ -153,9 +154,16 @@ end
         def action(self, name):
             self.cmd('script-message-to', 'splay', 'splay-action', name)
 
+        def console_ready(self):
+            # The form is requested before the console has taken over the
+            # keys; a key sent in between goes to the player and is lost.
+            wait_for('console is open for keys', lambda: self.get('user-data/mpv/console/open') is True)
+            time.sleep(.4)
+
         def submit(self, value):
             # Use real console keys. New mpv assigns input-event/N handlers;
             # depending on a private callback name would skip the real form.
+            self.console_ready()
             if isinstance(value, int):
                 assert value == 1
             else:
@@ -173,6 +181,7 @@ end
                  and any(needle in item for item in state.get('items', [])) else None)
                 (self.get('user-data/splay-test-input') or {}))
             index = next(i for i, item in enumerate(status['items']) if needle in item)
+            self.console_ready()
             for _ in status['items']:
                 self.cmd('keypress', 'UP')
             for _ in range(index):
@@ -211,6 +220,7 @@ end
 
         def fill_native(self,secret=None,key='ENTER'):
             hwnd=wait_for('isolated production Windows password dialog opens',self.native_window)
+            send_behind(hwnd)
             edit=user.GetDlgItem(hwnd,1001)
             assert user.GetWindowLongPtrW(edit,-16)&0x20,'Native password must use ES_PASSWORD'
             wait_for('native password input never opens console',lambda:self.get('user-data/mpv/console/open') is not True)

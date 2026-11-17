@@ -14,7 +14,7 @@ import subprocess
 import time
 import uuid
 
-from interop import Job, ROOT, wait_for
+from interop import Job, ROOT, background_window, wait_for
 
 
 def main():
@@ -43,7 +43,7 @@ def main():
         logs.append(log)
         process = subprocess.Popen(list(map(str, command)), cwd=cwd, env=env,
                                    stdout=log, stderr=subprocess.STDOUT,
-                                   creationflags=subprocess.CREATE_NO_WINDOW)
+                                   creationflags=subprocess.CREATE_NO_WINDOW, startupinfo=background_window())
         job.assign(process)
         processes.append(process)
         return process

@@ -53,6 +53,28 @@ class Job:
             self.api.CloseHandle(self.handle)
             self.handle = None
 
+def background_window(minimized=False):
+    """Start-up information for a player that opens a real window.
+
+    The window is shown without being activated, so a test run does not take
+    the keyboard from whoever is using the machine; minimized, it does not
+    cover their windows either. mpv's --focus-on=never alone does not prevent
+    the activation of a new window.
+    """
+    info = subprocess.STARTUPINFO()
+    info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    info.wShowWindow = 7 if minimized else 4  # SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE
+    return info
+
+
+def send_behind(hwnd):
+    """Put a window the test only talks to through messages behind every other
+    window, without activating it, so it does not sit on top of the user's work."""
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    user.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    user.SetWindowPos(hwnd, wintypes.HWND(1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # HWND_BOTTOM; NOSIZE, NOMOVE, NOACTIVATE
+
+
 def wait_for(description, predicate, seconds=15):
     until = time.monotonic() + seconds
     last = None

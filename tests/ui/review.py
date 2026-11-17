@@ -1,8 +1,11 @@
 from pathlib import Path
 import subprocess
 import argparse
+import sys
 
 root = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(root / 'tests/integration'))
+from interop import background_window
 output = root / '.local/ui-review-v4'
 output.mkdir(parents=True, exist_ok=True)
 parser=argparse.ArgumentParser()
@@ -64,7 +67,7 @@ for mode, page in ((mode,page) for mode in ('native', 'uosc') for page in pages)
         args += ['--script=' + str(opts.uosc)]
     # subprocess.run kills and waits for the direct process on timeout.
     result = subprocess.run(args, cwd=root, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, timeout=15)
+                            stderr=subprocess.STDOUT, timeout=15, startupinfo=background_window(minimized=True))
     text = result.stdout.decode('utf-8', errors='replace')
     (output / (mode + '-' + page + '.log')).write_text(text, encoding='utf-8')
     assert result.returncode == 0, text

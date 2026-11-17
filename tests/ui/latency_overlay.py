@@ -13,7 +13,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tests/integration'))
-from interop import Job, wait_for
+from interop import Job, background_window, wait_for
 
 
 def main():
@@ -29,7 +29,7 @@ def main():
         '--force-window=yes', '--window-minimized=yes', '--geometry=1100x800', '--ao=null', '--pause=yes',
         '--input-ipc-server=' + pipe_name, '--script=' + str(ROOT / 'scripts/splay_overlay.lua'),
         str(ROOT / '.local/test-media.mp4')], stdout=log, stderr=subprocess.STDOUT,
-        creationflags=subprocess.CREATE_NO_WINDOW)
+        creationflags=subprocess.CREATE_NO_WINDOW, startupinfo=background_window(minimized=True))
     job.assign(process)
     pipe = None
     serial = 0

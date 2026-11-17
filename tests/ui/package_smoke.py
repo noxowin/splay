@@ -3,8 +3,11 @@ from pathlib import Path
 import subprocess
 import zipfile
 import argparse
+import sys
 
 root = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(root / 'tests/integration'))
+from interop import background_window
 parser=argparse.ArgumentParser()
 parser.add_argument('--mpv',type=Path,default=root/'.local/mpv/runtime/mpv.exe')
 version=(root/'VERSION').read_text(encoding='ascii').strip()
@@ -22,7 +25,7 @@ args = [str(opts.mpv), '--config-dir=' + str(config),
         '--idle=yes', '--force-window=yes', '--ao=null', '--msg-level=all=debug',
         '--script=' + str(root / 'tests/ui/package_driver.lua')]
 result = subprocess.run(args, cwd=root, stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT, timeout=10)
+                        stderr=subprocess.STDOUT, timeout=10, startupinfo=background_window(minimized=True))
 text = result.stdout.decode('utf-8', errors='replace')
 (config / 'smoke.log').write_text(text, encoding='utf-8')
 assert result.returncode == 0, text

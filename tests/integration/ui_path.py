@@ -15,7 +15,7 @@ import subprocess
 import time
 import uuid
 
-from interop import Job, ROOT, wait_for
+from interop import Job, ROOT, background_window, wait_for
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--mpv', type=Path, default=ROOT/'.local/mpv/runtime/mpv.exe')
@@ -56,7 +56,7 @@ def launch(name, command):
     logs.append(log)
     process = subprocess.Popen(list(map(str, command)), cwd=ROOT, env=env,
                                stdout=log, stderr=subprocess.STDOUT,
-                               creationflags=subprocess.CREATE_NO_WINDOW)
+                               creationflags=subprocess.CREATE_NO_WINDOW, startupinfo=background_window())
     job.assign(process)
     processes.append(process)
     return process
