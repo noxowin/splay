@@ -1,6 +1,6 @@
 # 参与 splay 开发
 
-欢迎提交可复现的问题和有明确范围的改进。先阅读 [安装说明](docs/install.md)、[已知限制](docs/validation-v0.1.1.md) 和 [架构](docs/architecture.zh-CN.md)。大改动建议先在 Issue 中说明使用场景、期望行为和验收方式。
+欢迎提交可复现的问题和有明确范围的改进。先阅读 [安装说明](docs/install.md)、[已知限制](docs/validation-v0.2.0.md) 和 [架构](docs/architecture.zh-CN.md)。大改动建议先在 Issue 中说明使用场景、期望行为和验收方式。
 
 ## 提交问题
 
@@ -25,7 +25,7 @@ python tools/check.py history --compiler 'C:\path\to\g++.exe'
 python tools/check.py credentials --compiler 'C:\path\to\g++.exe'
 python tools/check.py net --compiler 'C:\path\to\g++.exe'
 python tools/package.py
-python tools/verify_release.py --archive dist/splay-windows-x64-v0.1.1.zip --require-license
+python tools/verify_release.py --archive dist/splay-windows-x64-v0.2.0.zip --require-license
 ```
 
 协议与同步核心（`core`、`reconnect`、`latency`、`autostart`、`room-policy`、`catchup` 六组）不依赖 Windows API，也可在 Linux 的 GCC 下运行；加 `--sanitize` 会启用 AddressSanitizer 与 UndefinedBehaviorSanitizer，MinGW 不支持该选项。其余检查和插件构建仍需 Windows。
@@ -42,7 +42,7 @@ GitHub Actions 在 push、pull request 和手动触发时执行上述构建、�
 
 已有发布包应保持原样。复核打包时可用 `python tools/package.py --output .local/review/splay-review.zip` 输出到独立目录，再用校验器的 `--archive` 指定该文件。
 
-修改 Lua 界面需要补充原生/uosc 的实际窗口检查；修改协议或同步逻辑需要使用未修改的官方客户端与服务端互通。修改适配层的事件循环、未连接时的行为、本机时间偏移或密码输入框，还需运行 `python tests/integration/offline_path.py`：它在真实播放器上检查核心休眠期间的操作不会带入之后的偏移或房间，核心单测覆盖不到这一层。执行入口和覆盖范围见 [v0.1.1 验证记录](docs/validation-v0.1.1.md)。这些测试依赖外部播放器与官方测试工具，未放进默认 CI，也不能用核心单测代替。
+修改 Lua 界面需要补充原生/uosc 的实际窗口检查；修改协议或同步逻辑需要使用未修改的官方客户端与服务端互通。修改适配层的事件循环、未连接时的行为、本机时间偏移或密码输入框，还需运行 `python tests/integration/offline_path.py`：它在真实播放器上检查核心休眠期间的操作不会带入之后的偏移或房间，核心单测覆盖不到这一层。执行入口和覆盖范围见 [v0.2.0 验证记录](docs/validation-v0.2.0.md)。这些测试依赖外部播放器与官方测试工具，未放进默认 CI，也不能用核心单测代替。
 
 ## 互通测试准备
 

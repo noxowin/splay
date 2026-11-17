@@ -1,15 +1,15 @@
-# Install and use splay v0.1.1 on Windows
+# Install and use splay v0.2.0 on Windows
 
 **English** · [简体中文](install.zh-CN.md) · [README](https://github.com/noxowin/splay)
 
 ## Install or upgrade
 
-1. Download [splay-windows-x64-v0.1.1.zip](https://github.com/noxowin/splay/releases/download/v0.1.1/splay-windows-x64-v0.1.1.zip) from the [v0.1.1 pre-release](https://github.com/noxowin/splay/releases/tag/v0.1.1). Check its SHA256 against the published checksum. v0.1.1 is a pre-release; the previous release remains available as [v0.1.0](https://github.com/noxowin/splay/releases/tag/v0.1.0).
+1. Download [splay-windows-x64-v0.2.0.zip](https://github.com/noxowin/splay/releases/download/v0.2.0/splay-windows-x64-v0.2.0.zip) from the [v0.2.0 release](https://github.com/noxowin/splay/releases/tag/v0.2.0). Check its SHA256 against the published checksum.
 2. Close mpv and locate its active configuration directory: commonly `%APPDATA%\mpv`, or `portable_config` beside `mpv.exe` for portable installations. Launchers may select another directory.
 3. Copy **all four** files into that directory's `scripts` folder: `splay.lua`, `splay_core.dll`, `splay_overlay.lua`, `splay_playlist.lua`. Back up and replace existing splay files together.
 4. Keep `mpv.conf`, `input.conf`, `uosc.conf` and other scripts. Optional non-secret defaults can be copied from [splay.conf.example](../script-opts/splay.conf.example) into `script-opts/splay.conf`. Never put passwords there.
 
-Requires Windows x64 mpv with C plugins and Lua `mp.input`. uosc is optional. Python, LuaSocket and a separate Syncplay client are not required at runtime. Tested versions and coverage are in [validation](validation-v0.1.1.md). GitHub's Source code ZIP does not contain a compiled DLL.
+Requires Windows x64 mpv with C plugins and Lua `mp.input`. uosc is optional. Python, LuaSocket and a separate Syncplay client are not required at runtime. Tested versions and coverage are in [validation](validation-v0.2.0.md). GitHub's Source code ZIP does not contain a compiled DLL.
 
 ## Connect and navigate
 
@@ -70,7 +70,7 @@ Latency display/sharing is on by default (`latency_enabled=yes`). Values measure
 
 Create/join a Syncplay controlled room and authenticate as controller to restrict room playback and playlist edits. A base room name is limited to 21 characters; a controller password uses the `AB-123-456` format. Others join the full controlled-room name returned by the server. Server and controller passwords are typed into the mpv input box and are visible while typed.
 
-**Smooth catch-up is on by default**: when this player is 1.5 to 4 s ahead of the room, it plays at 0.95× until level instead of jumping back; a lead over 4 s or a delay over 1.5 s is still corrected by seeking. A short notice appears when it starts and ends. Turn it off in Settings → Smooth catch-up, or with `smooth_catchup=no` in `splay.conf`. Quitting mpv while slowed does not save 0.95× into watch-later. A non-1× speed you set yourself suspends synchronization, and splay leaves it alone; loading/buffering operations are not broadcast as user actions. Unseekable media cannot be aligned. Real browser authentication chains, live streams and ad timelines have limited coverage; check [validation](validation-v0.1.1.md).
+**Smooth catch-up is on by default**: when this player is 1.5 to 4 s ahead of the room, it plays at 0.95× until level instead of jumping back; a lead over 4 s or a delay over 1.5 s is still corrected by seeking. A short notice appears when it starts and ends. Turn it off in Settings → Smooth catch-up, or with `smooth_catchup=no` in `splay.conf`. Quitting mpv while slowed does not save 0.95× into watch-later. A non-1× speed you set yourself suspends synchronization, and splay leaves it alone; loading/buffering operations are not broadcast as user actions. Unseekable media cannot be aligned. Real browser authentication chains, live streams and ad timelines have limited coverage; check [validation](validation-v0.2.0.md).
 
 TLS `prefer` permits plaintext only when the server explicitly lacks TLS; `require` rejects plaintext; `off` disables TLS. Handshake/certificate failure never downgrades. The current transport uses Windows Schannel TLS 1.2 with weak cipher algorithms refused, and system trust with cached certificate-chain checks.
 
