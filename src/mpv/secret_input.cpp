@@ -30,7 +30,7 @@ void wipe(std::string& value) {
 }
 
 struct SecretInput::Impl {
-    struct Request { std::uint64_t id; std::string title, prompt; };
+    struct Request { std::uint64_t id; std::string title, prompt, note, ok, cancel; };
     std::mutex mutex;
     std::optional<Request> pending;
     std::deque<SecretResult> results;
@@ -61,6 +61,10 @@ struct SecretInput::Impl {
         MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
                             static_cast<int>(value.size()), result.data(), size);
         return result;
+    }
+    static std::wstring label(const std::string& value, const wchar_t* fallback) {
+        auto text = wide(value);
+        return text.empty() ? std::wstring(fallback) : text;
     }
     void result(SecretResult value) {
         std::lock_guard<std::mutex> lock(mutex);
@@ -171,9 +175,12 @@ struct SecretInput::Impl {
         edit = control(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_TABSTOP | ES_PASSWORD | ES_AUTOHSCROLL,
                        16, 56, 488, 26, 1001);
         SendMessageW(edit, EM_SETLIMITTEXT, max_units, 0);
-        control(0, L"STATIC", L"密码由 Windows 输入框接收，不会写入 mpv 输入历史。", 0, 16, 92, 488, 28, -1);
-        const HWND ok = control(0, L"BUTTON", L"确定", WS_TABSTOP | BS_DEFPUSHBUTTON, 316, 136, 88, 28, IDOK);
-        const HWND cancel = control(0, L"BUTTON", L"取消", WS_TABSTOP | BS_PUSHBUTTON, 416, 136, 88, 28, IDCANCEL);
+        control(0, L"STATIC", label(request.note, L"密码由 Windows 输入框接收，不会写入 mpv 输入历史。").c_str(),
+                0, 16, 92, 488, 28, 1002);
+        const HWND ok = control(0, L"BUTTON", label(request.ok, L"确定").c_str(),
+                                WS_TABSTOP | BS_DEFPUSHBUTTON, 316, 136, 88, 28, IDOK);
+        const HWND cancel = control(0, L"BUTTON", label(request.cancel, L"取消").c_str(),
+                                    WS_TABSTOP | BS_PUSHBUTTON, 416, 136, 88, 28, IDCANCEL);
         if (!edit || !ok || !cancel) {
             finish(true);
             result({request.id, false, {}, "Could not create the Windows password controls"});
@@ -232,16 +239,17 @@ struct SecretInput::Impl {
 
 SecretInput::SecretInput() : impl_(std::make_unique<Impl>()) {}
 SecretInput::~SecretInput() = default;
-void SecretInput::request(std::uint64_t id, const std::string& title, const std::string& prompt) {
+void SecretInput::request(std::uint64_t id, const std::string& title, const std::string& prompt,
+                          const std::string& note, const std::string& ok, const std::string& cancel) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     for (auto& result : impl_->results) wipe(result.value);
     impl_->results.clear();
 #ifdef _WIN32
     if (!impl_->wake) { impl_->results.push_back({id, false, {}, "Could not initialize the Windows password dialog"}); return; }
-    impl_->pending = Impl::Request{id, title, prompt};
+    impl_->pending = Impl::Request{id, title, prompt, note, ok, cancel};
     SetEvent(impl_->wake);
 #else
-    (void)title; (void)prompt;
+    (void)title; (void)prompt; (void)note; (void)ok; (void)cancel;
     impl_->results.push_back({id, false, {}, "Native password input is only available on Windows"});
 #endif
 }

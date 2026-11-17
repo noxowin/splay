@@ -21,7 +21,10 @@ public:
     ~SecretInput();
     SecretInput(const SecretInput&) = delete;
     SecretInput& operator=(const SecretInput&) = delete;
-    void request(std::uint64_t id, const std::string& title, const std::string& prompt);
+    // Interface text is plain data for static and button controls. Empty
+    // labels fall back to the built-in Chinese text.
+    void request(std::uint64_t id, const std::string& title, const std::string& prompt,
+                 const std::string& note = {}, const std::string& ok = {}, const std::string& cancel = {});
     std::optional<SecretResult> poll();
     void cancel();
 

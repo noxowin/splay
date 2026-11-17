@@ -37,6 +37,10 @@ int main() {
         if (action=="request") {
             input.request(id,"splay secret test "+std::to_string(id),u8"合成测试密码；不会写入 mpv 输入历史。");
             std::cout<<"ACK "<<id<<std::endl;
+        } else if (action=="request_en") {
+            input.request(id,"splay secret test "+std::to_string(id),"Synthetic test password",
+                          "Synthetic note: not written to mpv input history.","OK","Cancel");
+            std::cout<<"ACK "<<id<<std::endl;
         } else if (action=="cancel") { input.cancel(); std::cout<<"CANCELLED"<<std::endl; }
         else if (action=="quit") break;
         else if (action=="poll") {
@@ -76,6 +80,13 @@ user.SendMessageW.restype = c.c_ssize_t
 user.PostMessageW.argtypes = [w.HWND, w.UINT, w.WPARAM, w.LPARAM]
 user.SetWindowTextW.argtypes = [w.HWND, w.LPCWSTR]
 user.IsWindow.argtypes = [w.HWND]
+
+def control_text(hwnd, ident):
+    child = user.GetDlgItem(hwnd, ident)
+    assert child, 'Missing dialog control '+str(ident)
+    text = c.create_unicode_buffer(256)
+    user.GetWindowTextW(child, text, len(text))
+    return text.value
 proc = subprocess.Popen([str(exe)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                         text=True, encoding='utf-8', creationflags=subprocess.CREATE_NO_WINDOW,
                         startupinfo=background_window())
@@ -133,6 +144,9 @@ def window(number):
 try:
     command('request 1','ACK 1')
     hwnd,edit=window(1)
+    # Without labels from Lua the dialog keeps its Chinese defaults.
+    assert (control_text(hwnd,1),control_text(hwnd,2))==('确定','取消')
+    assert control_text(hwnd,1002)=='密码由 Windows 输入框接收，不会写入 mpv 输入历史。'
     assert user.GetWindowLongPtrW(edit,-16) & 0x20, 'Password EDIT must have ES_PASSWORD'
     assert user.SendMessageW(edit,0xD2,0,0) != 0, 'Password masking character must be enabled'
     assert user.SendMessageW(edit,0xD5,0,0) == 1024, 'Input length must be bounded'
@@ -162,6 +176,11 @@ try:
     set_text(edit,'你'*400)  # 1200 UTF-8 bytes; rejected, never returned.
     user.PostMessageW(edit,0x100,0x0D,0)
     result_for(7,'RESULT 7 0 0 1 0')
+    command('request_en 9','ACK 9'); hwnd,edit=window(9)
+    assert (control_text(hwnd,1),control_text(hwnd,2))==('OK','Cancel')
+    assert control_text(hwnd,1002)=='Synthetic note: not written to mpv input history.'
+    user.PostMessageW(edit,0x100,0x1B,0)
+    result_for(9,'RESULT 9 1 0 0 0')
     command('request 8','ACK 8'); hwnd,edit=window(8)
     command('quit')
     proc.wait(timeout=5)
@@ -170,7 +189,7 @@ try:
     combined=''.join(logs)
     for secret in ('合成Splay_Only_42','CANCELLED_SYNTHETIC','REPLACED_SYNTHETIC'):
         assert secret not in combined, 'Native output must contain no passwords'
-    print('SECRET_INPUT_NATIVE_PASSED masking, Unicode, Enter/Esc/close, bounded length, replacement, cancel, shutdown, no secret output')
+    print('SECRET_INPUT_NATIVE_PASSED masking, Unicode, Enter/Esc/close, bounded length, replacement, cancel, shutdown, no secret output, supplied and default labels')
 finally:
     if proc.poll() is None:
         proc.kill();proc.wait(timeout=5)

@@ -31,7 +31,8 @@ local function start(props)
         playlist={{filename='D:/fixtures/a.mp4'},{filename='D:/fixtures/b.mp4'}}}
     for key,value in pairs(props or {}) do properties[key]=value end
     incoming={schema=1,enabled=true,connection='connected',host='localhost',port=8999,room='room',username='tester',
-        controlled=false,is_controller=false,playlist_supported=true,playlist={files={'a.mp4','b.mp4'},index=0,user='other'}}
+        controlled=false,is_controller=false,playlist_supported=true,playlist={files={'a.mp4','b.mp4'},index=0,user='other'},
+        settings={language='zh-CN'}}
     assert(loadfile(opt.source))()
 end
 local function state(extra)
@@ -200,5 +201,27 @@ assert(#core()[1].files==4 and core()[1].files[3]=='c.mp4' and core()[1].files[4
 assert(#loads()==0,'deduplication and skipping invalid queue items never starts playback')
 start();state();action('import-preview');assert(#core()==0,'an already shared local queue needs no command')
 
-print('PLAYLIST_FORMS_PASSED first-state preservation, explicit queue and URL preview consent, deduplication and stale-consent isolation, URL privacy and single-address consent, ACL, known and bound local resolution, generation-safe echo, follow and single EOF advance, native/uosc menu contracts')
+-- The main script sends the resolved interface language in settings.
+local function labels() local result={};for _,row in ipairs(selected.items) do result[row]=true end;return result end
+start();state({settings={language='en'},is_controller=true});handlers['splay-playlist-open']('native')
+local rows=labels()
+assert(selected.prompt=='Shared playlist' and rows['‹ Back to splay'] and rows['Playlist · items: 2 · current 1'],selected.items[2])
+assert(rows['Follow room / next at end: Off'] and rows["Play the room's current item"] and rows['Add current file'] and rows['Import / add / clear'])
+action('edit');rows=labels()
+assert(rows['Import mpv playlist…'] and rows['Add a filename…'] and rows['Add a network address…'] and rows['Clear shared playlist…'])
+start({path='https://private.example/a?token=PRIVATE_TOKEN',playlist={{filename='https://private.example/a?token=PRIVATE_TOKEN'}}})
+state({settings={language='en'},is_controller=true});action('import-preview');rows=labels()
+assert(rows['Items to add: 1'] and rows['Network items shared with their full address: 1'] and rows['Confirm sharing to the room'])
+assert(rows['Network media · private.example'],'network entries show a translated label without the path or token')
+handlers['splay-playlist-open']('uosc')
+local english
+for _,value in ipairs(commands) do if value[2]=='uosc' and value[3]=='open-menu' then english=utils.parse_json(value[4]) end end
+assert(english.title=='Shared playlist' and english.items[1].title=='‹ Back to splay')
+start();state({settings={language='en'},controlled=true,is_controller=false});handlers['splay-playlist-open']('native')
+assert(labels()['Controlled room: only the operator can edit and select'])
+-- A later state switches back without reloading the script.
+state({settings={language='zh-CN'},controlled=false});handlers['splay-playlist-open']('native')
+assert(selected.prompt=='共享播放列表' and labels()['‹ 返回 splay'])
+
+print('PLAYLIST_FORMS_PASSED first-state preservation, explicit queue and URL preview consent, deduplication and stale-consent isolation, URL privacy and single-address consent, ACL, known and bound local resolution, generation-safe echo, follow and single EOF advance, native/uosc menu contracts, English rows and language switch')
 real_mp.commandv('quit',0)

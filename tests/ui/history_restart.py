@@ -16,7 +16,7 @@ config=opts.output.resolve()
 (config/'script-opts').mkdir(exist_ok=True)
 for source in (root/'build/splay_core.dll',root/'scripts/splay.lua',root/'scripts/splay_overlay.lua',root/'scripts/splay_playlist.lua'):
     shutil.copy2(source,config/'scripts'/source.name)
-(config/'script-opts/splay.conf').write_text('host=localhost\nusername=old-example\n',encoding='utf8')
+(config/'script-opts/splay.conf').write_text('host=localhost\nusername=old-example\nlanguage=zh-CN\n',encoding='utf8')
 fixture=dict(host='restored.example',port=9009,username='重启昵称',room='重启房间',tls='require')
 other=dict(host='other.example',port=8999,username='other',room='other-room',tls='off')
 path=config/'splay-history.json'

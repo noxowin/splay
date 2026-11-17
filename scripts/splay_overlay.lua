@@ -5,7 +5,7 @@ local options = require 'mp.options'
 local msg = require 'mp.msg'
 local cfg = {status_osd=true, button_enabled=true, button_bottom=48, button_right=22,
     overlay_font_size=22, danmaku_font_scale=1.15, overlay_chat_ttl=5, overlay_chat_lines=4,
-    overlay_message_ttl=5, room_panel=true, room_idle_timeout=3, chat_mode='room',danmaku_smooth=false}
+    overlay_message_ttl=5, room_panel=true, room_idle_timeout=3, chat_mode='room',danmaku_smooth=false,language='auto'}
 local state = {enabled=false, connection='disconnected', members={}}
 -- Round-trip times arrive in their own splay-latency message, not in the state.
 local latency = {enabled=false, members={}}
@@ -21,7 +21,35 @@ local visible, hovering, last_near, uosc = false, false, -100, false
 local section = 'splay-overlay-buttons'
 local redraw, update_buttons, close_popup, integrate_uosc
 local popup_open, popup, menu_rows, anchor = false, nil, {}, nil
-local menu_model = {title='同步播放',items={{title='启用同步播放',value='toggle-enabled'}}}
+-- Interface text, gettext style: the Chinese source text is the key. The main
+-- script resolves the language and sends it in state.settings; before the
+-- first state, an explicit language in splay.conf applies, otherwise Chinese.
+local EN = {
+    ['同步播放']='Sync playback',['启用同步播放']='Enable sync playback',['名称未提供']='Name not provided',
+    ['网络媒体（名称未提供）']='Network media (name not provided)',['对方长%s秒']='Peer %s s longer',
+    ['对方短%s秒']='Peer %s s shorter',
+    ['平滑弹幕滤镜已被外部修改，未改动现有滤镜；可关闭后重新开启重试。']='The smooth scrolling filter was changed externally; existing filters were left alone. Turn the option off and on to retry.',
+    ['未能撤销平滑弹幕滤镜；现有其他滤镜未改动，请关闭后重新开启重试。']='Could not remove the smooth scrolling filter; other filters were left alone. Turn the option off and on to retry.',
+    ['平滑弹幕滤镜已失效，已回到普通弹幕；关闭后重新开启可重试。']='The smooth scrolling filter stopped working; back to normal scrolling. Turn the option off and on to retry.',
+    ['无法读取视频滤镜，使用普通弹幕；关闭后重新开启可重试。']='Cannot read the video filters; using normal scrolling. Turn the option off and on to retry.',
+    ['平滑弹幕标签已被占用，使用普通弹幕；未改动现有滤镜。']='The smooth scrolling filter label is already in use; using normal scrolling. Existing filters were left alone.',
+    ['当前播放器或硬件解码无法启用平滑弹幕，使用普通弹幕；关闭后重新开启可重试。']='This player or hardware decoding cannot enable smooth scrolling; using normal scrolling. Turn the option off and on to retry.',
+    ['尚未载入文件']='No file loaded',['时长未知']='unknown',['自动开播 · %s 秒（菜单可取消）']='Autostart · %s s (cancel in menu)',
+    ['自动开播 · %s 秒']='Autostart · %s s',['时长不同']='Duration differs',
+    -- The room panel is narrow: English shows only the difference itself.
+    ['时长不同 · %s']='%s',['… 另有 %s 位成员']='… and %s more',
+    ['等待房间成员']='Waiting for members',['共享列表 · %s 项']='Shared list · %s',['发送聊天']='Send chat',
+    ['展开完整菜单']='Show full menu',['%s 跳转到 %s']='%s seeked to %s',['%s 暂停于 %s']='%s paused at %s',
+    ['%s 恢复播放于 %s']='%s resumed at %s',
+}
+local language
+local function T(text)
+    local current=language or ((cfg.language=='zh-CN' or cfg.language=='en') and cfg.language) or 'zh-CN'
+    if current=='en' then return EN[text] or text end
+    return text
+end
+-- Until the main script sends its menu, show a fallback in the current language.
+local menu_model
 local integrated, installed_controls, original_controls_override = false, nil, nil
 local base_controls
 local had_controls_override = false
@@ -160,16 +188,16 @@ local function wrap_text(value,units,max_rows,keep_tail)
 end
 local function playlist_label(value)
     local text=tostring(value or ''):gsub('[%c]',' ')
-    if text:match('^%s*$') or text:lower():match('^%s*%**hidden filename%**%s*$') then return '名称未提供' end
+    if text:match('^%s*$') or text:lower():match('^%s*%**hidden filename%**%s*$') then return T('名称未提供') end
     local scheme=text:match('([%a][%w+.-]*)://')
     if scheme then
         -- Never display an authority, credentials or parameters, even for
         -- non-HTTP schemes. The original source stays intact in state.
-        return '网络媒体（名称未提供）'
+        return T('网络媒体（名称未提供）')
     end
-    if text:match('^%s*[%a][%w+.-]*:') and not text:match('^%a:[/\\]') then return '网络媒体（名称未提供）' end
+    if text:match('^%s*[%a][%w+.-]*:') and not text:match('^%a:[/\\]') then return T('网络媒体（名称未提供）') end
     local basename=text:match('([^/\\]+)[/\\]*$')
-    if not basename or basename:lower():match('^%s*%**hidden filename%**%s*$') then return '名称未提供' end
+    if not basename or basename:lower():match('^%s*%**hidden filename%**%s*$') then return T('名称未提供') end
     return basename
 end
 local function positive_duration(value)
@@ -189,7 +217,7 @@ local function duration_difference(value)
     local text=amount>=1e6 and string.format('%.3g',amount) or
         (string.format('%.6f',amount):gsub('0+$',''):gsub('%.$',''))
     if text=='0' then text='<0.000001' end
-    return '对方'..(value>0 and '长' or '短')..text..'秒'
+    return (value>0 and T('对方长%s秒') or T('对方短%s秒')):format(text)
 end
 local function escape(text)
     return text:gsub('\\', '\\\239\187\191'):gsub('{', '\\{'):gsub('}', '\\}')
@@ -244,14 +272,14 @@ local function remove_smooth_filter()
     if count==0 then smooth_owned,smooth_fps=nil,nil;return true end
     if count~=1 or not same_filter(smooth_owned,current) then
         smooth_owned,smooth_fps=nil,nil;smooth_blocked=true
-        smooth_notice('平滑弹幕滤镜已被外部修改，未改动现有滤镜；可关闭后重新开启重试。')
+        smooth_notice(T('平滑弹幕滤镜已被外部修改，未改动现有滤镜；可关闭后重新开启重试。'))
         return false
     end
     local ok,result=pcall(mp.commandv,'vf','remove','@'..SMOOTH_LABEL)
     local _,remaining=smooth_filter()
     if ok and result and remaining==0 then smooth_owned,smooth_fps=nil,nil;return true end
     smooth_blocked=true
-    smooth_notice('未能撤销平滑弹幕滤镜；现有其他滤镜未改动，请关闭后重新开启重试。')
+    smooth_notice(T('未能撤销平滑弹幕滤镜；现有其他滤镜未改动，请关闭后重新开启重试。'))
     return false
 end
 local function update_smooth_filter()
@@ -271,15 +299,15 @@ local function update_smooth_filter()
     if smooth_owned then
         if count~=1 or not same_filter(smooth_owned,current) then
             smooth_owned,smooth_fps=nil,nil;smooth_blocked=true
-            smooth_notice('平滑弹幕滤镜已失效，已回到普通弹幕；关闭后重新开启可重试。')
+            smooth_notice(T('平滑弹幕滤镜已失效，已回到普通弹幕；关闭后重新开启可重试。'))
         end
         return
     end
     if smooth_blocked then return end
     if count~=0 then
         smooth_blocked=true
-        smooth_notice(count<0 and '无法读取视频滤镜，使用普通弹幕；关闭后重新开启可重试。' or
-            '平滑弹幕标签已被占用，使用普通弹幕；未改动现有滤镜。')
+        smooth_notice(count<0 and T('无法读取视频滤镜，使用普通弹幕；关闭后重新开启可重试。') or
+            T('平滑弹幕标签已被占用，使用普通弹幕；未改动现有滤镜。'))
         return
     end
     local fps=tonumber(mp.get_property_native('display-fps'))
@@ -304,7 +332,7 @@ local function update_smooth_filter()
         -- Its tag was absent before our command, so remove just that node.
         if count==1 then smooth_owned=current;remove_smooth_filter() end
         smooth_blocked=true
-        smooth_notice('当前播放器或硬件解码无法启用平滑弹幕，使用普通弹幕；关闭后重新开启可重试。')
+        smooth_notice(T('当前播放器或硬件解码无法启用平滑弹幕，使用普通弹幕；关闭后重新开启可重试。'))
     end
 end
 local function is_uosc()
@@ -493,7 +521,7 @@ local function member_media(member)
     local file=media and media.title or fallback.name
     if not media and own and type(state.local_file)=='string' and state.local_file~='' then file=state.local_file end
     local loaded=media and media.loaded==true or not media and type(file)=='string' and file~=''
-    return {member=member,own=own,loaded=loaded,label=loaded and playlist_label(file) or '尚未载入文件',
+    return {member=member,own=own,loaded=loaded,label=loaded and playlist_label(file) or T('尚未载入文件'),
         duration=loaded and (media and positive_duration(media.duration) or not media and positive_duration(fallback.duration)) or nil,
         signal=latency_signal(member,own)}
 end
@@ -555,7 +583,7 @@ redraw = function()
     local panel_size=math.min(size*.83,panel_limit/18.5)
     local member_layouts={}
     local latency_units=1.5+text_units('1000 ms')
-    local duration_units=math.max(text_units(time_string(0)),text_units('时长未知'))+.3
+    local duration_units=math.max(text_units(time_string(0)),text_units(T('时长未知')))+.3
     for _,member in ipairs(state.members or {}) do
         if type(member)=='table' and (member.room==nil or member.room==state.room) then
             local layout=member_media(member)
@@ -592,7 +620,7 @@ redraw = function()
     notification_count=#chats+#notices+danmaku_count+(playback and 1 or 0)
     if not console_open and cfg.status_osd and state.enabled==true then
         local countdown=autostart_countdown()
-        if countdown and not panel_visible then add('自动开播 · '..countdown..' 秒（菜单可取消）','FFFF75',2) end
+        if countdown and not panel_visible then add(T('自动开播 · %s 秒（菜单可取消）'):format(countdown),'FFFF75',2) end
         if playback then add(playback.text,'FFFF75',2) end
         for _,item in ipairs(notices) do
             if y+size*2.7>height*.62 then break end
@@ -641,7 +669,7 @@ redraw = function()
                 return true
             end
             member_line(state.room,'FFFFFF','room')
-            if countdown then member_line('自动开播 · '..countdown..' 秒','FFFF75','autostart') end
+            if countdown then member_line(T('自动开播 · %s 秒'):format(countdown),'FFFF75','autostart') end
             local members=member_layouts
             local playlist=type(state.playlist)=='table' and state.playlist or nil
             local reserve=playlist and type(playlist.files)=='table' and #playlist.files>0 and psize*2.8 or 0
@@ -656,7 +684,7 @@ redraw = function()
                 local duration_color=not own and duration_colors[comparison.check] or 'AAAAAA'
                 local difference=loaded and comparison.check=='duration_mismatch' and duration_difference(comparison.duration_delta) or nil
                 local summary=not own and comparison.check=='duration_mismatch' and
-                    ('时长不同'..(difference and ' · '..difference or '')) or nil
+                    (difference and T('时长不同 · %s'):format(difference) or T('时长不同')) or nil
                 local needed=(#file_lines+1+(summary and 1 or 0))*psize*1.4
                 local more_reserve=shown+1<#members and psize*1.4 or 0
                 if py+needed+reserve+more_reserve>max_y then break end
@@ -664,18 +692,18 @@ redraw = function()
                 local signal=layout.signal
                 local marker=(type(member.ready)=='boolean' and '● ' or '○ ')
                 local name=fit_text(member.username,math.max(0,name_units-text_units(marker)))
-                member_line(marker..name,tint,'member',member.username,signal,duration and time_string(duration) or '时长未知',duration_color)
+                member_line(marker..name,tint,'member',member.username,signal,duration and time_string(duration) or T('时长未知'),duration_color)
                 for _,file_line in ipairs(file_lines) do member_line(file_line,'BBBBBB','file',member.username) end
                 if summary then member_line('  '..summary,'AAAAAA','media-summary',member.username) end
                 if loaded then displayed_files[label]=true end
                 shown=shown+1
             end
-            if shown<#members then member_line('… 另有 '..(#members-shown)..' 位成员','999999','more') end
-            if #members==0 then member_line('等待房间成员','999999','empty') end
+            if shown<#members then member_line(T('… 另有 %s 位成员'):format(#members-shown),'999999','more') end
+            if #members==0 then member_line(T('等待房间成员'),'999999','empty') end
             if playlist and type(playlist.files)=='table' and #playlist.files>0 then
                 local index=tonumber(playlist.index)
                 local current=index and index>=0 and index<#playlist.files and math.floor(index)+1 or nil
-                member_line('共享列表 · '..(current and current..' / ' or '')..#playlist.files..' 项','BBBBBB','playlist')
+                member_line(T('共享列表 · %s 项'):format((current and current..' / ' or '')..#playlist.files),'BBBBBB','playlist')
                 if current then
                     local label=playlist_label(playlist.files[current])
                     if not displayed_files[label] then
@@ -716,10 +744,10 @@ local function set_uosc_button()
     if not is_uosc() then return end
     local data={icon='sync',active=state.enabled==true,hide=console_open or not cfg.button_enabled,
         command={'script-message-to','splay_overlay','splay-popup'}}
-    if not popup_open then data.tooltip='同步播放' end
+    if not popup_open then data.tooltip=T('同步播放') end
     mp.commandv('script-message-to','uosc','set-button','splay',utils.format_json(data))
     mp.commandv('script-message-to','uosc','set-button','splay-chat',utils.format_json({
-        icon='chat',hide=console_open or not chat_available(),tooltip='发送聊天',
+        icon='chat',hide=console_open or not chat_available(),tooltip=T('发送聊天'),
         command={'script-message-to','splay','splay-action','chat'}}))
 end
 -- Read only the keys we need without mp.options warning about every unrelated
@@ -936,7 +964,8 @@ update_buttons=function()
         local padding=12*scale
         local font=16*scale
         local subtitle_font=14*scale
-        local items=type(menu_model.items)=='table' and menu_model.items or {}
+        local model=menu_model or {title=T('同步播放'),items={{title=T('启用同步播放'),value='toggle-enabled'}}}
+        local items=type(model.items)=='table' and model.items or {}
         local preferred=292*scale
         for _,item in ipairs(items) do
             if type(item)=='table' then
@@ -965,9 +994,9 @@ update_buttons=function()
         local bottom_limit=math.max(8,math.min(height-8,controls_top()-8*scale))
         if rectangles[1] then bottom_limit=math.min(bottom_limit,rectangles[1].y1-8*scale) end
         local max_height=math.max(0,bottom_limit-8)
-        local header_lines,header_clipped=wrap_text(menu_model.title or '同步播放',math.max(1,(pw-2*padding)/subtitle_font),2)
+        local header_lines,header_clipped=wrap_text(model.title or T('同步播放'),math.max(1,(pw-2*padding)/subtitle_font),2)
         local header_height=16*scale+#header_lines*subtitle_font*1.3
-        local footer_lines=wrap_text('展开完整菜单',available_units,2)
+        local footer_lines=wrap_text(T('展开完整菜单'),available_units,2)
         local footer_height=14*scale+#footer_lines*font*1.3
         local total=header_height+4*scale
         for _,layout in ipairs(layouts) do total=total+layout.height end
@@ -1057,6 +1086,7 @@ mp.register_script_message('splay-state',function(json)
         for _,key in ipairs({'status_osd','button_enabled','room_panel','danmaku_smooth'}) do
             if type(settings[key])=='boolean' then cfg[key]=settings[key] end
         end
+        if settings.language=='zh-CN' or settings.language=='en' then language=settings.language end
         if type(settings.chat_mode)=='string' then
             local mode=normalize_chat_mode(settings.chat_mode)
             if mode~=cfg.chat_mode then chats={};clear_danmaku() end
@@ -1115,9 +1145,9 @@ mp.register_script_message('splay-event',function(json)
         notices[#notices+1]={text=text,created=now,expires=now+safe_number(cfg.overlay_message_ttl,5,1,120)}
         while #notices>4 do table.remove(notices,1) end
     else
-        local action=value.seek==true and '跳转到' or value.paused==true and '暂停于' or value.paused==false and '恢复播放于' or nil
+        local action=value.seek==true and T('%s 跳转到 %s') or value.paused==true and T('%s 暂停于 %s') or value.paused==false and T('%s 恢复播放于 %s') or nil
         if not action then return end
-        playback={text=user..' '..action..' '..time_string(value.position),expires=mp.get_time()+safe_number(cfg.overlay_message_ttl,5,1,120)}
+        playback={text=action:format(user,time_string(value.position)),expires=mp.get_time()+safe_number(cfg.overlay_message_ttl,5,1,120)}
     end
     redraw()
 end)

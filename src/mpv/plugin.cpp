@@ -91,6 +91,10 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
         // state stays put, so they go in a small message of their own: a new
         // measurement does not make the interface take the whole state again.
         std::string published_state,published_latency;
+        // Interface language hint for language=auto. It is a Windows display
+        // concern, so it is added here rather than in the protocol core. Any
+        // Chinese UI language maps to the only Chinese translation shipped.
+        const char* system_language=PRIMARYLANGID(GetUserDefaultUILanguage())==LANG_CHINESE?"zh-CN":"en";
         auto deliver=[&](const char* name,const splay::Json& value,std::string& published,bool force){
             auto payload=value.dump(-1,' ',false,splay::Json::error_handler_t::replace);
             if(!force&&payload==published)return;
@@ -102,6 +106,7 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
         auto publish_state=[&](bool force){
             auto state=session.status();
             state["reconnect"]=reconnect.status(clock_now());
+            state["system_language"]=system_language;
             deliver("splay-state",state,published_state,force);
             deliver("splay-latency",session.latency_status(),published_latency,force);
         };
@@ -290,7 +295,8 @@ extern "C" MPV_EXPORT int mpv_open_cplugin(mpv_handle* h){
                             cancel_secret();
                             password_token.clear();
                             const auto id=c["request_id"].get<uint64_t>();
-                            secret_input.request(id,text(c,"title",256,true),text(c,"prompt",1024,true));
+                            secret_input.request(id,text(c,"title",256,true),text(c,"prompt",1024,true),
+                                text(c,"note",1024,true),text(c,"ok",64,true),text(c,"cancel",64,true));
                             pending_secret=PendingSecret{id,reconnect.generation(),c,session.room()};
                             }catch(const std::exception& exception){
                                 cancel_secret();

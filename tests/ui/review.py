@@ -12,7 +12,9 @@ parser=argparse.ArgumentParser()
 parser.add_argument('--mpv',type=Path,default=root/'.local/mpv/runtime/mpv.exe')
 parser.add_argument('--uosc',type=Path,default=root/'.local/uosc/scripts/uosc')
 parser.add_argument('--fonts',type=Path,default=root/'.local/uosc/fonts')
+parser.add_argument('--language',choices=('zh-CN','en'),default='zh-CN',help='Interface language to capture')
 opts=parser.parse_args()
+suffix='' if opts.language=='zh-CN' else '-'+opts.language
 mpv=opts.mpv
 fixture = output/'review-driver.lua'
 fixture.write_text("""
@@ -20,6 +22,9 @@ local options=require 'mp.options'
 local utils=require 'mp.utils'
 local opt={mode='native',page='home',output=''}
 options.read_options(opt,'review')
+-- The steps are timed from the moment the window can be captured. Counted
+-- from script load, a slow start left the screenshot before the first frame.
+local function begin()
 mp.add_timeout(.4,function()
     assert(mp.get_property_native('user-data/splay').enabled==false)
     if opt.page~='disabled' then mp.commandv('script-message-to','splay','splay-action','toggle-enabled') end
@@ -48,12 +53,17 @@ mp.add_timeout(2.05,function()
     if opt.page~='disabled' then mp.commandv('script-message-to','splay','splay-action','ready') end
 end)
 mp.add_timeout(2.5,function() mp.commandv('quit') end)
+end
+local begun=false
+mp.observe_property('vo-configured','bool',function(_,configured)
+    if configured and not begun then begun=true;begin() end
+end)
 """,encoding='utf-8')
 pages=('disabled','home','connection','endpoint','settings','password-settings','room-actions','members','message-history')
 for mode, page in ((mode,page) for mode in ('native', 'uosc') for page in pages):
     config=output/(mode+'-config')
     config.mkdir(exist_ok=True)
-    capture = output / (mode + '-' + page + '.png')
+    capture = output / (mode + '-' + page + suffix + '.png')
     capture.unlink(missing_ok=True)
     args = [str(mpv), '--no-config', '--config-dir='+str(config), '--ao=null', '--pause=yes', '--force-window=yes',
             '--autofit=1100x700', '--screenshot-format=png',
@@ -61,7 +71,7 @@ for mode, page in ((mode,page) for mode in ('native', 'uosc') for page in pages)
             '--script=' + str(root / 'scripts/splay.lua'),
             '--script=' + str(root / 'tests/ui/splay_core.lua'),
             '--script=' + str(fixture),
-            '--script-opts=splay-room=中文房间,splay-username=本机用户,review-mode=' + mode + ',review-page=' + page + ',review-output=' + str(capture),
+            '--script-opts=splay-language=' + opts.language + ',splay-room=中文房间,splay-username=本机用户,review-mode=' + mode + ',review-page=' + page + ',review-output=' + str(capture),
             str(root / '.local/test-media.mp4')]
     if mode == 'uosc':
         args += ['--script=' + str(opts.uosc)]
@@ -69,7 +79,7 @@ for mode, page in ((mode,page) for mode in ('native', 'uosc') for page in pages)
     result = subprocess.run(args, cwd=root, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, timeout=15, startupinfo=background_window(minimized=True))
     text = result.stdout.decode('utf-8', errors='replace')
-    (output / (mode + '-' + page + '.log')).write_text(text, encoding='utf-8')
+    (output / (mode + '-' + page + suffix + '.log')).write_text(text, encoding='utf-8')
     assert result.returncode == 0, text
     assert 'Lua error' not in text and 'stack traceback' not in text, text
     if page != 'disabled': assert 'UI_READY_COMMAND' in text, text

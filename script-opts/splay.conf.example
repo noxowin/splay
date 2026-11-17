@@ -25,6 +25,10 @@ room=
 tls=prefer
 # native uses mp.input; uosc requires separately installed uosc (tested 5.12/5.13).
 ui=native
+# Interface language: auto follows the Windows display language (any Chinese ->
+# zh-CN, otherwise en); zh-CN or en fixes it. Settings -> Language switches it at
+# runtime; that choice is remembered with history_enabled=yes and then takes precedence.
+language=auto
 # The ordinary Shift+s binding can be overridden by input.conf.
 # Overlay visibility/position (also toggle visibility in the splay menu).
 status_osd=yes

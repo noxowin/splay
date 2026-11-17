@@ -3,6 +3,7 @@
 The synchronization core suites (core, reconnect, latency, autostart,
 room-policy) are portable C++ and also run on Linux; the others use Windows APIs.
 The lua suite only parses the scripts and runs wherever LuaJIT or luac is installed.
+The i18n suite statically checks interface translation coverage and needs only Python.
 """
 from pathlib import Path
 import argparse
@@ -13,7 +14,7 @@ import sys
 from build import ROOT, default_compiler
 
 parser = argparse.ArgumentParser()
-parser.add_argument('suite', choices=['core', 'reconnect', 'latency', 'autostart', 'room-policy', 'history', 'credentials', 'net', 'ui', 'ui-review', 'ui-history', 'tls-rejection', 'lua'])
+parser.add_argument('suite', choices=['core', 'reconnect', 'latency', 'autostart', 'room-policy', 'history', 'credentials', 'net', 'ui', 'ui-review', 'ui-history', 'tls-rejection', 'lua', 'i18n'])
 parser.add_argument('--compiler', default=default_compiler())
 parser.add_argument('--sanitize', action='store_true',
                     help='Build the portable core suites with AddressSanitizer and UndefinedBehaviorSanitizer (not MinGW)')
@@ -39,6 +40,9 @@ if args.suite == 'lua':
     if failed:
         raise SystemExit('Lua syntax errors in: ' + ', '.join(str(path.relative_to(ROOT)) for path in failed))
     print(f'Lua syntax: {len(files)} files parsed with {Path(tool).name}')
+    raise SystemExit(0)
+if args.suite == 'i18n':
+    subprocess.run([sys.executable, str(ROOT/'tests/ui/i18n_coverage.py')], cwd=ROOT, check=True, timeout=60)
     raise SystemExit(0)
 if not WINDOWS and args.suite not in CORE_SUITES:
     raise SystemExit(f'The {args.suite} suite uses Windows APIs; only the core suites run on this platform')

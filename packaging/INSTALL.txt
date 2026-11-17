@@ -22,7 +22,8 @@ Initial server: syncplay.pl:8999; nickname: splayuser; no default room.
 Enter opens/sends quick chat; Esc cancels. Shift+h opens transparent message
 history with continuous chat; Page Up/Down or wheel scroll, Esc closes.
 Settings provides chat mode, visibility, room behavior and reconnect options.
-Chat mode and join/leave pause preferences are remembered with history enabled.
+Settings > Language switches Simplified Chinese/English; Auto follows Windows.
+Chat mode, language and join/leave pause preferences are remembered with history.
 Join pause requests a room-wide pause; a member leaving the same room also
 requests a pause. Both default on and obey controlled-room permissions.
 All-ready autostart defaults on with a five-second countdown. Use one coordinator

@@ -85,6 +85,8 @@ class Player:
             '--input-conf='+str(self.input_config),
             '--input-ipc-server='+self.pipe_name, '--force-window=yes',
             '--geometry=1000x680+50+50', '--pause=yes', '--ao=null',
+            # Pin the interface language: assertions must not follow the host's UI language.
+            '--script-opts=splay-language=zh-CN',
             '--screenshot-format=png', ROOT/'.local/test-media.mp4']
         if args.uosc:
             command += ['--script='+str(args.uosc)]

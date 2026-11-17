@@ -59,6 +59,9 @@ Json preferences(const Json& source) {
         if(key=="chat_mode") {
             if(!it.value().is_string()||(it.value()!="room"&&it.value()!="danmaku"))
                 throw std::runtime_error("Invalid chat mode preference");
+        } else if(key=="language") {
+            if(!it.value().is_string()||(it.value()!="auto"&&it.value()!="zh-CN"&&it.value()!="en"))
+                throw std::runtime_error("Invalid language preference");
         } else if(key=="pause_on_leave"||key=="pause_on_join") {
             if(!it.value().is_boolean())throw std::runtime_error("Invalid room pause preference");
         } else throw std::runtime_error("Unknown history preference: "+key);

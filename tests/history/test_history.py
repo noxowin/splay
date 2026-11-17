@@ -242,6 +242,10 @@ with tempfile.TemporaryDirectory(prefix='splay-history-',dir=artifact_root) as f
     prefs={'chat_mode':'danmaku','pause_on_join':False,'pause_on_leave':True}
     assert command(prefs_path,'history-preferences',preferences={'pause_on_join':False,'pause_on_leave':True})['preferences']==prefs
     assert call(prefs_path)['preferences']==prefs, 'preferences survive a fresh process'
+    for language in ('en','zh-CN','auto'):
+        prefs['language']=language
+        assert command(prefs_path,'history-preferences',preferences={'language':language})['preferences']==prefs
+        assert call(prefs_path)['preferences']==prefs, 'language preference survives a fresh process'
     stale=subprocess.Popen([str(exe),str(prefs_path),'--stream'],stdin=subprocess.PIPE,
                            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8')
     assert json.loads(stale.stdout.readline())['preferences']==prefs
@@ -259,12 +263,13 @@ with tempfile.TemporaryDirectory(prefix='splay-history-',dir=artifact_root) as f
     parallel_path=Path(folder)/'preferences-races.json'
     operations=[lambda:command(parallel_path,'history-preferences',preferences={'chat_mode':'danmaku'}),
                 lambda:command(parallel_path,'history-preferences',preferences={'pause_on_join':False}),
-                lambda:command(parallel_path,'history-preferences',preferences={'pause_on_leave':False})]
+                lambda:command(parallel_path,'history-preferences',preferences={'pause_on_leave':False}),
+                lambda:command(parallel_path,'history-preferences',preferences={'language':'en'})]
     operations.extend(lambda i=i:call(parallel_path,profile(600+i)) for i in range(12))
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         outcomes=list(pool.map(lambda operation:operation(),operations))
     assert all('error' not in result for result in outcomes),outcomes
-    expected={'chat_mode':'danmaku','pause_on_join':False,'pause_on_leave':False}
+    expected={'chat_mode':'danmaku','pause_on_join':False,'pause_on_leave':False,'language':'en'}
     final=call(parallel_path)
     assert final['preferences']==expected and len(final['profiles'])==12
     command(parallel_path,'history-clear-values',field='room')
@@ -276,12 +281,13 @@ with tempfile.TemporaryDirectory(prefix='splay-history-',dir=artifact_root) as f
     previous=parallel_path.read_bytes()
     for invalid in (None,[],True,{'chat_mode':'unknown'},{'chat_mode':True},
                     {'pause_on_join':1},{'pause_on_leave':'false'},
+                    {'language':'fr'},{'language':'zh-TW'},{'language':'EN'},{'language':True},
                     {'password':'SYNTHETIC_PREF_SECRET'},{'time_offset':12}):
         assert 'error' in command(parallel_path,'history-preferences',preferences=invalid),invalid
         assert parallel_path.read_bytes()==previous
     assert command(parallel_path,'history-preferences',preferences={})['preferences']==expected
     # Loading damaged preferences fails explicitly and never overwrites bytes.
-    for invalid in ([],{'pause_on_join':None},{'chat_mode':'unknown'},{'unknown':True}):
+    for invalid in ([],{'pause_on_join':None},{'chat_mode':'unknown'},{'language':'fr'},{'unknown':True}):
         stored=dict(schema=1,last={},profiles=[],values={},preferences=invalid)
         damaged=json.dumps(stored).encode('utf-8');parallel_path.write_bytes(damaged)
         assert 'error' in call(parallel_path)
@@ -289,4 +295,4 @@ with tempfile.TemporaryDirectory(prefix='splay-history-',dir=artifact_root) as f
         assert parallel_path.read_bytes()==damaged
 print('History: blank-room draft restart, strict completed profiles and stored values, legacy rooms, mixed draft/profile merges, Unicode paths, 30 concurrent profile merges, dedup, secrets whitelist, validation, corruption and failed write preservation passed')
 print('History management: named identities, stale-process re-read, parallel rename/delete/save merge, authoritative cleared suggestions, legacy migration, request IDs, strict input and secret isolation passed')
-print('History preferences: fresh-process persistence, stale-player save preservation, concurrent independent merges, clear preservation and invalid data protection passed')
+print('History preferences: fresh-process persistence including language, stale-player save preservation, concurrent independent merges, clear preservation and invalid data protection passed')

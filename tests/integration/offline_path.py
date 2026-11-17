@@ -83,6 +83,8 @@ def main():
     parser.add_argument('--plugin', type=Path, default=ROOT / 'build/splay_core.dll')
     parser.add_argument('--scripts', type=Path, default=ROOT / 'scripts', help='Directory with the three Lua scripts')
     parser.add_argument('--media', type=Path, default=ROOT / '.local/test-media.mp4')
+    parser.add_argument('--language', choices=['zh-CN', 'en'],
+                        help='Pin the interface language; default follows the system through language=auto')
     args = parser.parse_args()
     media = str(args.media)
     output = ROOT / '.local/integration' / ('offline-' + time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:6])
@@ -113,6 +115,12 @@ def main():
     user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
     user.IsWindow.argtypes = [wintypes.HWND]
     user.IsWindowVisible.argtypes = [wintypes.HWND]
+    user.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+
+    def window_text(hwnd):
+        buffer = ctypes.create_unicode_buffer(1024)
+        user.GetWindowTextW(hwnd, buffer, len(buffer))
+        return buffer.value
 
     def note(text, **values):
         findings.append(dict(step=text, **values))
@@ -279,7 +287,7 @@ def main():
         wait_for('unmodified password-protected official server listens', listening)
         (config / 'script-opts/splay.conf').write_text(
             'host=127.0.0.1\nport=%d\nusername=offline\nroom=%s\ntls=off\nremember_password=no\nauto_reconnect=no\n'
-            % (port, room), encoding='utf-8')
+            % (port, room) + ('language=%s\n' % args.language if args.language else ''), encoding='utf-8')
 
         p = Production()
         assert p.get('user-data/splay').get('enabled') is False
@@ -287,6 +295,8 @@ def main():
         p.action('toggle-enabled')
         wait_for('splay enabled, still disconnected', lambda: p.state().get('enabled') is True)
         assert p.state()['connection'] == 'disconnected' and p.offset() == 0
+        language = p.state()['settings']['language']
+        assert language == (args.language or language) and language in ('zh-CN', 'en'), language
 
         # ---- Local time offset with no connection ---------------------------------
         # Setting an offset relocates only this player: local = reference + offset.
@@ -340,6 +350,12 @@ def main():
         assert user.GetWindowLongPtrW(user.GetDlgItem(box, 1001), -16) & 0x20, 'edit control must have the password style'
         assert user.IsWindowVisible(box)
         assert p.get('user-data/mpv/console/open') is not True, 'the password must not go through the mpv console'
+        # The box is native, but its text comes from the interface in its language.
+        labels = dict(title=window_text(box), note=window_text(user.GetDlgItem(box, 1002)),
+                      ok=window_text(user.GetDlgItem(box, 1)), cancel=window_text(user.GetDlgItem(box, 2)))
+        assert all(labels.values()), labels
+        assert (labels['ok'], labels['cancel']) == (('OK', 'Cancel') if language == 'en' else ('确定', '取消')), labels
+        assert all(text.isascii() for text in labels.values()) == (language == 'en'), labels
         # The player stays usable behind the open box.
         p.seek(10)
         p.play_for(1.2)
@@ -350,8 +366,8 @@ def main():
         assert p.secret()['cancelled'] is True and p.secret()['has_token'] is False
         closed = p.finish_box(p.open_box(), 'close')
         assert p.secret()['cancelled'] is True and p.secret()['has_token'] is False
-        note('the box is a masked separate window, the player works behind it, Esc and close cancel',
-             result_after_escape_seconds=cancelled, result_after_close_seconds=closed)
+        note('the box is a masked separate window in the interface language, the player works behind it, Esc and close cancel',
+             language=language, result_after_escape_seconds=cancelled, result_after_close_seconds=closed)
 
         first = p.open_box()
         p.action('password')

@@ -60,7 +60,7 @@ def main():
             command = [args.mpv, '--config-dir='+str(self.config), '--load-scripts=yes',
                        '--input-ipc-server='+self.pipe_name, '--pause=yes', '--ao=null', '--idle=yes',
                        '--force-window=yes', '--geometry=820x600+1080+50', '--keep-open=no',
-                       '--screenshot-format=png', media]
+                       '--screenshot-format=png', '--script-opts=splay-language=zh-CN', media]
             command += ['--script='+str(ROOT/'tests/integration/playlist_observer.lua')]
             if uosc:
                 command += ['--script='+str(args.uosc)]

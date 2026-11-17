@@ -46,6 +46,8 @@ local function start(config)
     terminated=0;active_request=nil
     properties={['options/load-console']=true,path='https://private.example/SECRET_URL',filename='本机影片.mp4',['idle-active']=false}
     overrides=config or {}
+    -- Chinese assertions must not depend on the machine's UI language.
+    if overrides.language==nil then overrides.language='zh-CN' end
     assert(loadfile(opt.source))()
 end
 local function core()
@@ -725,5 +727,98 @@ for _,command in ipairs(core()) do
     if command.action=='set-offset' then assert(command.settings==nil and command.path==nil and command.filename==nil) end
 end
 
-print('UI_FORMS_PASSED default off, Settings and room actions, endpoint editing, encrypted credential commands and stale reply isolation, playlist handoff, 300-event transparent persistent history, stable nickname colours and white body, continuous chat and Esc/stale-room guards, conditional shortcuts, modal generations, saved-profile navigation, preference restore/touch/save, strict durations, editable local offsets and stale candidates, media privacy and lifecycle, overlay replay')
+-- Interface language: representative English text, a runtime switch without
+-- reloading, auto following the adapter's system language, persistence only
+-- with an adapter that knows the preference, and the resolved value for the
+-- overlay and playlist scripts.
+local function sent_state(target)
+    for i=#commands,1,-1 do
+        if commands[i][2]==target and commands[i][3]=='splay-state' then return utils.parse_json(commands[i][4]) end
+    end
+end
+local function settings_row(fragment)
+    for index,text in ipairs(selected.items) do if text:find(fragment,1,true) then return index end end
+end
+start({language='en',history_enabled=false});credential_init(false)
+assert(model().items[1].title=='Enable splay' and model().title=='splay | Off')
+act('toggle-enabled')
+assert(model().items[1].title=='Join room' and model().items[2].title=='Create room' and
+    model().items[3].title=='Settings' and model().items[4].title=='Disable splay')
+assert(display_state().settings.language=='en' and sent_state('splay_playlist').settings.language=='en','resolved language reaches the other scripts')
+act('settings');assert(selected.prompt=='Settings | Disconnected')
+assert(label('语言 / Language: English') and label('Message history: 0') and label('Show status: On') and label('Chat mode: Room chat'))
+assert(label('All-ready autostart: On (5 s)') and label('Auto reconnect: On') and label('Pause room when a member joins: On'))
+assert(label('Connection history: 0') and label('Disable splay'));dismiss()
+act('join-form');assert(selected.prompt=='Join room | Disconnected')
+assert(label('‹ Back') and label('Server: syncplay.pl : 8999') and label('Room: Enter or choose one') and
+    label('Server password: None') and label('Nickname: splayuser') and label('Connection profiles: 0') and label('Join'));dismiss()
+act('connect');assert(notices[#notices]=='Enter or choose a room, then choose "Join"' and prompted.prompt=='Room: ');dismiss()
+act('create-form');assert(prompted.prompt=='New room name: ');finish('english-room')
+assert(selected.prompt=='Create room | Disconnected' and label('Create and join') and label('Room: english-room'));dismiss()
+state({username='self',time_offset=5,members={{username='self',room='active-room',ready=true,is_controller=true},
+    {username='peer',room='active-room',ready=false}}})
+assert(model().items[2].title=='Not ready' and model().items[3].title=='Shared playlist' and model().items[4].title=='Room functions' and
+    model().items[6].title=='Disconnect')
+act('room-actions');assert(selected.prompt=='Room functions | Connected')
+assert(label('Room members: 2') and label('Local time offset: +5 s') and label('Authenticate as operator') and
+    label('Create controlled room…') and label('Controlled rooms need a separate operator password'));dismiss()
+act('time-offset');assert(label('Enter offset in seconds…') and label('+1 s (this player 1 s ahead)') and label('Reset to zero') and
+    label('Local time = room time + offset.'));dismiss()
+act('members');assert(label('self | active-room | Ready | Operator') and label('peer | active-room | Not ready'));dismiss()
+act('authenticate');local english_secret=last('secret-input')
+assert(english_secret.title=='splay operator authentication' and english_secret.prompt=='Enter the operator password (e.g. AB-123-456)')
+assert(english_secret.ok=='OK' and english_secret.cancel=='Cancel' and english_secret.note:find('not written to mpv input history',1,true))
+assert(notices[#notices]=='Enter it in the Windows password dialog; it is not written to mpv input history')
+secret_reply(english_secret,nil,false,true)
+state({username='self',time_offset=5,warning='Waiting for media; synchronization is suspended',members={}})
+handlers['splay-open']('uosc')
+local function uosc_menu(name)
+    for i=#commands,1,-1 do if commands[i][2]=='uosc' and commands[i][3]==name then return utils.parse_json(commands[i][4]) end end
+end
+assert(uosc_menu('open-menu').footnote=='Waiting for media; synchronization is suspended','English shows the core warning as it is')
+for index,event in ipairs({{type='connection',connection='connecting'},{type='ready',username='joiner',ready=true},
+    {type='user',action='joined',username='joiner',room='active-room'},{type='playback',username='joiner',paused=true,position=65},
+    {type='autostart',action='cancelled',reason='waiting-ready'}}) do
+    event.schema=1;event.id=3000+index;handlers['splay-event'](utils.format_json(event))
+end
+state({connection='error',error='Example server error',members={}})
+act('message-history')
+assert(label('Message history · ') and label('Connection: Connecting') and label('joiner is ready') and label('joiner joined: active-room'))
+assert(label('joiner paused · 65 s') and label('Autostart cancelled: Waiting for everyone to be ready'))
+assert(label('Waiting for media; synchronization is suspended') and label('Connection failed: Example server error'))
+assert(not label('等待媒体') and not label('连接失败'));dismiss()
+-- Runtime switch: auto (Chinese system) -> 简体中文 -> English -> auto, without
+-- reloading; an open uosc menu is replaced and the native menu reopens.
+start({language='auto'});credential_init(false);history_reply(history);act('toggle-enabled')
+state({system_language='zh-CN'})
+assert(model().items[5].title=='设置' and display_state().settings.language=='zh-CN')
+act('settings');assert(label('语言 / Language: 自动（简体中文）'))
+finish(settings_row('语言 / Language'),'select')
+assert(last('history-preferences').preferences.language=='zh-CN')
+assert(selected.prompt=='设置 | 已连接' and label('语言 / Language: 简体中文'),'native settings reopen after a language step')
+finish(settings_row('语言 / Language'),'select')
+assert(last('history-preferences').preferences.language=='en' and display_state().settings.language=='en')
+assert(selected.prompt=='Settings | Connected' and label('语言 / Language: English') and label('Show status: On'))
+assert(model().items[5].title=='Settings' and model().items[2].title=='Not ready')
+dismiss();handlers['splay-open']('uosc');act('toggle-language')
+assert(uosc_menu('update-menu').title=='splay | 已连接' and display_state().settings.language=='zh-CN','open uosc menu follows the switch')
+assert(last('history-preferences').preferences.language=='auto' and model().items[5].title=='设置')
+-- auto follows the adapter's system language and keeps it while disabled; an
+-- older adapter without the field keeps Chinese and gets no saved preference.
+start({language='auto',history_enabled=false});act('toggle-enabled')
+assert(model().items[1].title=='加入房间','auto without an adapter report stays Chinese')
+state({connection='disconnected',system_language='en'})
+assert(model().items[1].title=='Join room' and display_state().settings.language=='en')
+state({connection='disconnected'});assert(model().items[1].title=='Join room','a state without the field keeps the reported language')
+act('toggle-enabled');assert(model().items[1].title=='Enable splay')
+start({language='auto'});history_reply(history);act('toggle-enabled');state()
+assert(model().items[5].title=='设置')
+act('toggle-language');act('toggle-language')
+assert(model().items[5].title=='Settings' and count('history-preferences')==0,'an older adapter rejects the language preference')
+start({language='auto'});act('toggle-enabled');state({system_language='zh-CN'})
+local saved_language=utils.parse_json(utils.format_json(history));saved_language.preferences={language='en'}
+history_reply(saved_language)
+assert(model().items[5].title=='Settings' and display_state().settings.language=='en','saved language preference is restored')
+
+print('UI_FORMS_PASSED default off, Settings and room actions, endpoint editing, encrypted credential commands and stale reply isolation, playlist handoff, 300-event transparent persistent history, stable nickname colours and white body, continuous chat and Esc/stale-room guards, conditional shortcuts, modal generations, saved-profile navigation, preference restore/touch/save, strict durations, editable local offsets and stale candidates, media privacy and lifecycle, overlay replay, English labels, runtime language switch, auto system language and fallback')
 real_mp.commandv('quit')
