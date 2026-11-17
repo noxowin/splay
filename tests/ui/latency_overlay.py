@@ -163,7 +163,33 @@ def main():
         assert not any(row['kind'] == 'autostart' for row in publish()['room_rows'])
         state['autostart'].update(enabled=False, reason='disabled')
         assert not any(row['kind'] == 'autostart' for row in publish()['room_rows'])
+
+        # Status lines at the top left draw a nickname in the colour the main
+        # script assigned, wherever the sentence puts it; the rest keeps the
+        # line's own colour. A malformed colour leaves the line uncoloured.
+        def event(**value):
+            command('script-message-to', 'splay_overlay', 'splay-event', json.dumps(dict(schema=1, **value)))
+
+        def status_rows():
+            return snapshot_now().get('status_rows') or []
+
+        event(id='colour-1', type='notice', text='alice 已准备', category='ready',
+              spans=[{'text': 'alice', 'color': 'BB70C1'}, {'text': ' 已准备'}])
+        event(id='colour-2', type='notice', text='Ahead of bob; slowing down', category='catchup',
+              spans=[{'text': 'Ahead of '}, {'text': 'bob', 'color': 'A5DC41'}, {'text': '; slowing down'}])
+        event(id='colour-3', type='notice', text='carol 已准备', category='ready',
+              spans=[{'text': 'carol', 'color': 'not-a-colour'}, {'text': ' 已准备'}])
+        event(id='colour-4', type='playback', username='dave', paused=True, position=12, user_color='048DB2')
+        rows = status_rows()
+        assert any('\\1c&HBB70C1&' in row and row.index('alice') < row.index('{\\1c&HBBBBBB&} 已准备') for row in rows), rows
+        assert any('\\1c&HBBBBBB&' in row and '{\\1c&HA5DC41&}bob{\\1c&HBBBBBB&}; slowing down' in row for row in rows), rows
+        carol = next(row for row in rows if 'carol' in row)
+        assert '\\1c&HBBBBBB&' in carol and '{\\1c&H' not in carol.split('}', 1)[1], carol
+        dave = next(row for row in rows if 'dave' in row)
+        assert '\\1c&H048DB2&' in dave and '{\\1c&HFFFF75&}' in dave, dave
+        colour_rows = rows
         (output / 'result.json').write_text(json.dumps({'passed': True, 'network_mocked': True,
+            'status_colour_rows': colour_rows,
             'numeric_rows': snapshot['room_rows'], 'default_off': True, 'unknown_and_stale': True,
             'media_delta_rows': media_snapshot['room_rows'], 'countdown_rows': countdown_snapshot['room_rows'],
             'english_rows': english_snapshot['room_rows'],
