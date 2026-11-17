@@ -1,15 +1,15 @@
-# Windows v0.1.1 安装与使用
+# Windows v0.2.0 安装与使用
 
 [English](install.md) · **简体中文** · [项目介绍](https://github.com/noxowin/splay/blob/main/README.zh-CN.md)
 
 ## 安装或升级
 
-1. 从 [v0.1.1 预发布页](https://github.com/noxowin/splay/releases/tag/v0.1.1) 下载 [splay-windows-x64-v0.1.1.zip](https://github.com/noxowin/splay/releases/download/v0.1.1/splay-windows-x64-v0.1.1.zip)，用发布的 SHA256 校验值核对。v0.1.1 为预发布版本；上一版仍可从 [v0.1.0](https://github.com/noxowin/splay/releases/tag/v0.1.0) 获取。
+1. 从 [v0.2.0 发布页](https://github.com/noxowin/splay/releases/tag/v0.2.0) 下载 [splay-windows-x64-v0.2.0.zip](https://github.com/noxowin/splay/releases/download/v0.2.0/splay-windows-x64-v0.2.0.zip)，用发布的 SHA256 校验值核对。
 2. 退出 mpv，找到实际配置目录。常见位置为 `%APPDATA%\mpv`，便携版通常使用 `mpv.exe` 旁的 `portable_config`；启动器也可能指定其他目录。
 3. 将 **四个文件全部**复制到该目录的 `scripts` 文件夹：`splay.lua`、`splay_core.dll`、`splay_overlay.lua`、`splay_playlist.lua`。升级时先备份已有 splay 文件，再一起替换。
 4. 保留原有 `mpv.conf`、`input.conf`、`uosc.conf` 和其他脚本。可从 [splay.conf.example](../script-opts/splay.conf.example) 选取非秘密默认值写入 `script-opts/splay.conf`，不要填写密码。
 
-需要 Windows x64 mpv，支持 C 插件及 Lua `mp.input`；uosc 可选。运行无需 Python、LuaSocket 或独立 Syncplay 客户端。测试版本与覆盖范围见 [验证记录](validation-v0.1.1.md)。GitHub 的 Source code ZIP 不含已编译 DLL。
+需要 Windows x64 mpv，支持 C 插件及 Lua `mp.input`；uosc 可选。运行无需 Python、LuaSocket 或独立 Syncplay 客户端。测试版本与覆盖范围见 [验证记录](validation-v0.2.0.md)。GitHub 的 Source code ZIP 不含已编译 DLL。
 
 ## 连接与菜单
 
@@ -70,7 +70,7 @@ Shift+s 是普通绑定，`input.conf` 可以覆盖。需要明确绑定时使�
 
 需要限制播放与列表编辑时，创建或加入 Syncplay 受控房间并认证操作员。基础房间名最多 21 字符，操作员密码格式为 `AB-123-456`；其他成员用服务器返回的完整受控房间名加入。服务器密码和操作员密码均在 mpv 输入框中输入，输入时可见。
 
-**平滑追赶默认开启**：本机领先房间 1.5 至 4 秒时，暂时以 0.95 倍速播放直到追平，不再跳回；领先超过 4 秒或落后超过 1.5 秒仍直接跳转。开始和结束都有短暂提示，可在“设置 → 平滑追赶”关闭，或在 `splay.conf` 写 `smooth_catchup=no`。减速期间退出 mpv 不会把 0.95 倍速记入稍后观看。你自己设置的非 1× 播放会暂停同步，splay 不会改动它；加载、缓冲期间不把操作当作主动动作广播。不可跳转媒体无法对齐。浏览器鉴权链、直播和广告时间轴的覆盖有限，见 [验证记录](validation-v0.1.1.md)。
+**平滑追赶默认开启**：本机领先房间 1.5 至 4 秒时，暂时以 0.95 倍速播放直到追平，不再跳回；领先超过 4 秒或落后超过 1.5 秒仍直接跳转。开始和结束都有短暂提示，可在“设置 → 平滑追赶”关闭，或在 `splay.conf` 写 `smooth_catchup=no`。减速期间退出 mpv 不会把 0.95 倍速记入稍后观看。你自己设置的非 1× 播放会暂停同步，splay 不会改动它；加载、缓冲期间不把操作当作主动动作广播。不可跳转媒体无法对齐。浏览器鉴权链、直播和广告时间轴的覆盖有限，见 [验证记录](validation-v0.2.0.md)。
 
 TLS `prefer` 仅在服务器明确不支持 TLS 时允许明文；`require` 拒绝明文；`off` 关闭 TLS。握手或证书失败不降级。当前使用 Windows Schannel TLS 1.2 并拒绝弱加密算法，采用系统信任与缓存证书链检查。
 

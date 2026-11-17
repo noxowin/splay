@@ -7,7 +7,7 @@
 
 [English](README.md) · **简体中文**
 
-**[下载 Windows x64 v0.1.1 预发布版](https://github.com/noxowin/splay/releases/download/v0.1.1/splay-windows-x64-v0.1.1.zip)** · [发布页面](https://github.com/noxowin/splay/releases/tag/v0.1.1) · [安装与使用](docs/install.zh-CN.md) · [更新记录](CHANGELOG.md) · [问题反馈](https://github.com/noxowin/splay/issues)
+**[下载 Windows x64 v0.2.0](https://github.com/noxowin/splay/releases/download/v0.2.0/splay-windows-x64-v0.2.0.zip)** · [发布页面](https://github.com/noxowin/splay/releases/tag/v0.2.0) · [安装与使用](docs/install.zh-CN.md) · [更新记录](CHANGELOG.md) · [问题反馈](https://github.com/noxowin/splay/issues)
 
 splay 是独立项目，并非 mpv 或 Syncplay 的官方发行版。同步不传输视频，每位成员需要自行获取媒体。
 
@@ -45,6 +45,6 @@ splay 是独立项目，并非 mpv 或 Syncplay 的官方发行版。同步不�
 
 ## 兼容与开发
 
-需要支持 C 插件和 Lua `mp.input` 的 Windows x64 mpv；uosc 可选。确切测试版本、验证结果与未覆盖范围见 [v0.1.1 验证记录](docs/validation-v0.1.1.md)，不保证所有 mpv 构建、整合包或浏览器鉴权流程均兼容。
+需要支持 C 插件和 Lua `mp.input` 的 Windows x64 mpv；uosc 可选。确切测试版本、验证结果与未覆盖范围见 [v0.2.0 验证记录](docs/validation-v0.2.0.md)，不保证所有 mpv 构建、整合包或浏览器鉴权流程均兼容。
 
 构建见 [贡献指南](CONTRIBUTING.md)，技术说明见 [架构](docs/architecture.zh-CN.md) 与 [上游兼容说明](docs/upstream-compatibility.md)。原创代码采用 [GPL-3.0-only](LICENSE)，第三方文件保留各自许可，见 [第三方声明](THIRD_PARTY_NOTICES.md)。安全问题按 [SECURITY.md](SECURITY.md) 反馈。

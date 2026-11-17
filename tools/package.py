@@ -37,6 +37,7 @@ with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
     for name, path in files.items(): archive.write(path, name)
 digest = hashlib.sha256(destination.read_bytes()).hexdigest()
 checksum = destination.with_name(destination.name + '.sha256')
-checksum.write_text(digest + '  ' + destination.name + '\n', encoding='ascii')
+# LF on every platform: sha256sum -c reads a CR as part of the file name.
+checksum.write_text(digest + '  ' + destination.name + '\n', encoding='ascii', newline='\n')
 print(destination)
 print(checksum)

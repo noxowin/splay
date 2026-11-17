@@ -91,6 +91,14 @@ for _,kind in ipairs({'get','select'}) do
             status.closed=true;mp.set_property_native('user-data/splay-test-input',status)
             if closed then closed(...) end
         end
+        -- Only the length of the line, so a test can tell every key arrived
+        -- without the probe ever holding what was typed.
+        local edited=request.edited
+        request.edited=function(text,...)
+            status.length=#tostring(text or '')
+            mp.set_property_native('user-data/splay-test-input',status)
+            if edited then return edited(text,...) end
+        end
         return original(request)
     end
 end
@@ -194,13 +202,33 @@ end
             return status if status.get('kind')=='get' and not status.get('closed') and \
                 '输入时可见' in (status.get('prompt') or '') else None
 
+        def type_keys(self, text):
+            """Type text into the open console line, one key at a time.
+
+            A key sent over IPC is now and then lost before it reaches the
+            console. The probe reports the line's length, so a short line is
+            cleared and typed again instead of being submitted wrong.
+            """
+            for attempt in range(3):
+                for character in text:
+                    self.cmd('keypress', character)
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    if (self.get('user-data/splay-test-input') or {}).get('length') == len(text):
+                        return
+                    time.sleep(.05)
+                print('typed again: the console line has the wrong length (attempt %d)' % (attempt + 1), flush=True)
+                self.cmd('keypress', 'Ctrl+a')
+                self.cmd('keypress', 'Ctrl+k')
+                time.sleep(.3)
+            raise AssertionError('keys typed into the console kept getting lost')
+
         def fill_password(self,secret=None,key='ENTER'):
             # Real console keys into the production password prompt.
             wait_for('production password prompt opens in the mpv console',self.password_prompt)
             self.console_ready()
-            if secret is not None:
-                for character in secret:
-                    self.cmd('keypress', character)
+            if secret:
+                self.type_keys(secret)
             if key=='CLOSE':
                 # Opening the panel replaces the prompt: closed, never submitted.
                 self.action('connection')
