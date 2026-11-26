@@ -152,8 +152,8 @@ def main():
         wait_for('real native playlist selector opens', lambda: leader.get('user-data/mpv/console/open') is True)
         time.sleep(.2)
         leader.cmd('screenshot-to-file', str(output/'native-playlist.png'), 'window')
-        leader.cmd('keypress', 'DOWN')
-        time.sleep(.12)
+        # mp.input.select and uosc both open with the first row ("back")
+        # already highlighted, so a single DOWN reaches the playlist row.
         leader.cmd('keypress', 'DOWN')
         time.sleep(.12)
         leader.cmd('screenshot-to-file', str(output/'native-browser-choice.png'), 'window')
@@ -167,8 +167,7 @@ def main():
             follower.cmd('screenshot-to-file', str(output/'uosc-playlist.png'), 'window')
             follower.cmd('keypress', 'DOWN')
             time.sleep(.08)
-            follower.cmd('keypress', 'DOWN')
-            time.sleep(.08)
+            follower.cmd('screenshot-to-file', str(output/'uosc-browser-choice.png'), 'window')
             follower.cmd('keypress', 'ENTER')
             wait_for('uosc activation opens playlist browser', lambda: follower.ui().get('menu') == 'list')
             time.sleep(.2)
@@ -183,18 +182,28 @@ def main():
             assert follower.get('user-data/uosc/menu/type') == 'splay-playlist'
             follower.cmd('script-message-to', 'uosc', 'close-menu', 'splay-playlist')
 
-        # Local queue and server list are independent. Explicit import strips
-        # directories and skips a private URL without opening it.
+        # Local queue and server list are independent. Import previews the mpv
+        # queue first: entries already in the room list are dropped, a local file
+        # is offered by basename, and a network address is sent in full only
+        # after the explicit confirmation. Nothing is opened along the way.
+        nested = fixtures/'nested'
+        nested.mkdir()
+        third = nested/'third-本机.mp4'
+        shutil.copy2(args.media, third)
         private = 'https://private.invalid/video?token=LOCAL_ONLY_SECRET'
         leader.cmd('loadfile', str(second), 'append')
+        leader.cmd('loadfile', str(third), 'append')
         leader.cmd('loadfile', private, 'append')
-        before_queue = leader.get('playlist')
+        before_queue, before_path = leader.get('playlist'), leader.get('path')
         leader.act('import-preview')
+        wait_for('import opens the share preview', lambda: leader.ui().get('menu') == 'share')
         time.sleep(.2)
-        assert leader.ui()['count'] == 2, 'import preview shared the queue before confirmation'
-        leader.act('import')
-        wait_for('explicit import shares local basenames only', lambda: leader.ui().get('count') == 4 and follower.ui().get('count') == 4)
+        assert leader.ui()['count'] == 2 and follower.ui()['count'] == 2, 'import preview shared the queue before confirmation'
+        leader.act('share-confirm')
+        wait_for('confirmed import adds only the new local file and the network address',
+                 lambda: leader.ui().get('count') == 4 and follower.ui().get('count') == 4)
         assert leader.get('playlist') == before_queue, 'server playlist import rewrote mpv queue'
+        assert leader.get('path') == before_path, 'import opened a queued entry'
         leader.close_console()
         leader.splay('playlist-set', files=[first.name, second.name])
         wait_for('restore two-item server list', lambda: follower.ui().get('count') == 2)

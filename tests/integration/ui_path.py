@@ -171,7 +171,15 @@ class Player:
             self.click((button['x1']+button['x2'])/2, (button['y1']+button['y2'])/2)
             self.popup_open_method = 'actual standalone icon mouse click'
         wait_for(self.name+' production compact popup opens', lambda: self.geometry().get('popup_open'))
-        assert self.geometry()['rows'][0]['value'] == 'toggle-enabled'
+        values = [row['value'] for row in self.geometry()['rows']]
+        status = self.get('user-data/splay')
+        if not status['enabled']:
+            assert values == ['toggle-enabled'], values
+        elif status['connection'] == 'connected':
+            # Connected home leads with the room; enable/disable lives in settings.
+            assert values[0] == 'connection' and 'disconnect' in values and 'toggle-enabled' not in values, values
+        else:
+            assert values[0] == 'join-form' and values[-1] == 'toggle-enabled', values
 
     def click_row(self, value):
         row = next(item for item in self.geometry()['rows'] if item['value'] == value)
