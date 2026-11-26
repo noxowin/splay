@@ -7,7 +7,7 @@ Syncplay-compatible rooms, synchronized playback, chat and shared playlists insi
 
 **English** · [简体中文](README.zh-CN.md)
 
-**[Download v0.2.0 for Windows x64](https://github.com/noxowin/splay/releases/download/v0.2.0/splay-windows-x64-v0.2.0.zip)** · [Release](https://github.com/noxowin/splay/releases/tag/v0.2.0) · [Install & use](docs/install.md) · [Changelog](CHANGELOG.md) · [Report an issue](https://github.com/noxowin/splay/issues)
+**[Download v0.2.1 for Windows x64](https://github.com/noxowin/splay/releases/download/v0.2.1/splay-windows-x64-v0.2.1.zip)** · [Release](https://github.com/noxowin/splay/releases/tag/v0.2.1) · [Install & use](docs/install.md) · [Changelog](CHANGELOG.md) · [Report an issue](https://github.com/noxowin/splay/issues)
 
 splay is an independent project, not an official mpv or Syncplay distribution. It synchronizes playback; everyone supplies their own media.
 
@@ -45,6 +45,6 @@ By default, joining a room requests a room-wide pause, and a member leaving the 
 
 ## Compatibility and development
 
-Requires Windows x64 mpv with C-plugin and Lua `mp.input` support; uosc is optional. Exact tested versions, validation results and remaining limits are recorded in [v0.2.0 validation](docs/validation-v0.2.0.md). Support for every mpv build, player distribution or browser authentication flow is not implied.
+Requires Windows x64 mpv with C-plugin and Lua `mp.input` support; uosc is optional. Exact tested versions, validation results and remaining limits are recorded in [v0.2.1 validation](docs/validation-v0.2.1.md). Support for every mpv build, player distribution or browser authentication flow is not implied.
 
 See [Contributing](CONTRIBUTING.md), [Architecture](docs/architecture.md) and [Upstream compatibility](docs/upstream-compatibility.md). Original code is [GPL-3.0-only](LICENSE); third-party files retain their licenses in [Third-party notices](THIRD_PARTY_NOTICES.md). Report security issues as described in [SECURITY.md](SECURITY.md).
