@@ -4,7 +4,7 @@
 
 splay runs inside an existing mpv process. A C++17 native plugin handles the protocol and playback synchronization, Lua provides the interface, and uosc is an optional integration. The DLL uses the host API through `MPV_CPLUGIN_DYNAMIC_SYM` and does not link a second libmpv. See [Contributing](../CONTRIBUTING.md) for the build.
 
-This document describes v0.2.0. Differences from earlier versions are listed in the [changelog](../CHANGELOG.md). The checks actually run for v0.2.0, and what they do not cover, are in the [validation record](validation-v0.2.0.md).
+This document describes v0.2.1. Differences from earlier versions are listed in the [changelog](../CHANGELOG.md). The checks actually run for v0.2.1, and what they do not cover, are in the [validation record](validation-v0.2.1.md).
 
 ## Modules
 
@@ -72,7 +72,7 @@ Scrolling chat uses its own ASS layer with cached text styles. Positions are ref
 
 During playback mpv normally draws the OSD with video frames, and can redraw it independently while paused, so raising the Lua animation rate alone cannot make text move more often than a low-frame-rate video is shown. Video filters are left alone by default. With `danmaku_smooth` explicitly enabled, scrolling chat mode may add an fps filter under its own label to raise the output rate to at most 60 frames per second, or to the display's rate on a slower screen. This repeats frames rather than interpolating motion, and adds processing load. Leaving the mode or disabling the plugin removes only the node splay added and only if it still matches; the rest of the filter chain is not replaced. If adding it fails, or something else changes it, a notice is shown and it is not retried on every state refresh. Titles are measured with cached actual ASS glyph widths, so no expensive measurement runs in an animation frame.
 
-The current interoperability baseline is unmodified Syncplay 1.7.6. The real tests and what they do not cover are in the [validation record](validation-v0.2.0.md); following official updates is described in [Upstream compatibility](upstream-compatibility.md).
+The current interoperability baseline is unmodified Syncplay 1.7.6. The real tests and what they do not cover are in the [validation record](validation-v0.2.1.md); following official updates is described in [Upstream compatibility](upstream-compatibility.md).
 
 ## References and sources
 

@@ -166,9 +166,14 @@ def main():
         wait_for('official client list update reaches plugin', lambda: playlist().get('files') == files)
         assert plugin.read()['path'] == args.media, 'Core playlist updates replaced caller media'
         print('PASS: playlist list/index round trip never loads media in plugin', flush=True)
+        # A rejected command's error goes out in one state message and the next
+        # regular state replaces it, so look in the observer's error record
+        # rather than the latest snapshot.
+        errors_before = len(plugin.read().get('errors', []))
         plugin.splay('playlist-index', index=999)
         wait_for('stale local index is a visible error without disconnect',
-                 lambda: state().get('connection') == 'connected' and 'range' in state().get('error', ''))
+                 lambda: state().get('connection') == 'connected' and any(
+                     'range' in error for error in plugin.read().get('errors', [])[errors_before:]))
         assert playlist()['index'] == 0
         maximum = ['maximum-' + str(i).zfill(3) + '-' + 'x' * 28 for i in range(250)]
         assert len(maximum) == 250 and sum(map(len, maximum)) == 10000
@@ -177,9 +182,11 @@ def main():
                  lambda: state().get('connection') == 'connected' and playlist().get('files') == maximum)
         official_lists(maximum)
         assert room_snapshot(room)['files'] == maximum
+        errors_before = len(plugin.read().get('errors', []))
         plugin.splay('playlist-set', files=['😀' * 40] * 250)
         wait_for('Unicode exceeding upstream wire limit is rejected without disconnecting either client',
-                 lambda: state().get('connection') == 'connected' and 'too large' in state().get('error', ''))
+                 lambda: state().get('connection') == 'connected' and any(
+                     'too large' in error for error in plugin.read().get('errors', [])[errors_before:]))
         assert playlist()['files'] == maximum
         official_lists(maximum)
         unicode_boundary = ['😀' * 4] * 250
